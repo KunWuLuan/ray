@@ -1,0 +1,27 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "fuse-llm"
+version = "0.1.0"
+description = "Multi-model GPU time-sharing SDK for Ray Serve + vLLM"
+readme = "README.md"
+requires-python = ">=3.10"
+license = {text = "Apache-2.0"}
+authors = [
+    {name = "Fuse LLM SDK"},
+]
+dependencies = [
+    "ray[llm]>=2.40",
+    "httpx>=0.24",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0",
+    "pytest-asyncio>=0.21",
+]
+
+[tool.setuptools.packages.find]
+include = ["fuse_llm*"]
