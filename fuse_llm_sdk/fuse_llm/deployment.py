@@ -213,6 +213,12 @@ class FuseModelDeployment:
     async def _initialize(self) -> None:
         """Sequentially start every engine, sleeping all but the default.
 
+        Engines are started one at a time with the **default model loaded
+        last**, so that at any moment during startup only a single engine is
+        awake (each non-default engine sleeps and frees its GPU memory before
+        the next starts).  This keeps peak GPU usage to one engine's worth,
+        which is required at high ``gpu_memory_utilization`` (e.g. 0.9).
+
         This method is **idempotent** — calling it again after the
         first successful run is a no-op.
         """
@@ -221,7 +227,19 @@ class FuseModelDeployment:
 
         engine_cls = _get_vllm_engine_class()
 
-        for model_id, llm_config in self._llm_configs.items():
+        # Load the default model LAST so that during startup only one engine
+        # is ever awake at a time: each non-default engine is put to sleep
+        # (freeing its GPU memory) before the next one starts, and the default
+        # is started into a free GPU and left awake.  Loading the default
+        # earlier would keep it awake while later engines start, requiring two
+        # engines' worth of GPU memory at once — which OOMs at high
+        # ``gpu_memory_utilization`` (e.g. 0.9, where each engine wants most
+        # of the GPU).
+        ordered_ids = [m for m in self._llm_configs if m != self._default_model]
+        ordered_ids.append(self._default_model)
+
+        for model_id in ordered_ids:
+            llm_config = self._llm_configs[model_id]
             logger.info("Initialising engine for model '%s' ...", model_id)
 
             # 1. Create the engine
@@ -243,19 +261,13 @@ class FuseModelDeployment:
                 self._stats[model_id].sleep_level = 1
                 logger.info("Engine for '%s' put to sleep (level=1).", model_id)
             else:
+                # Default is loaded last and left awake — it becomes the
+                # active model, holding a GPU that all other engines have
+                # already freed.
                 self._active_model = model_id
                 self._ready_events[model_id].set()
                 self._stats[model_id].last_active_time = time.time()
                 logger.info("Engine for '%s' is the default active model.", model_id)
-
-        # If the default model was slept (because it was not the last
-        # in iteration order), wake it up now.
-        if self._active_model != self._default_model:
-            await self._wakeup_engine(self._default_model)
-            self._active_model = self._default_model
-            self._stats[self._default_model].state = "awake"
-            self._ready_events[self._default_model].set()
-            self._stats[self._default_model].last_active_time = time.time()
 
         self._initialized = True
         logger.info(
