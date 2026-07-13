@@ -7,9 +7,20 @@ Public API
 - :func:`deploy` — one-line deployment helper
 """
 
-from fuse_llm.deployment import FuseModelDeployment, ModelStats
+from fuse_llm.deployment import (
+    FuseModelDeployment,
+    ModelStats,
+    set_vllm_engine_class,
+)
 from fuse_llm.controller import TrafficAwareController
-from fuse_llm.deploy import deploy, make_model_config, FuseServeDeployment
+from fuse_llm.deploy import (
+    deploy,
+    make_model_config,
+    select_executor_backend,
+    FuseServeDeployment,
+)
+from fuse_llm.engines import InProcessVLLMEngine
+from fuse_llm.fused_ray_executor import FusedRayExecutor
 
 __all__ = [
     "FuseModelDeployment",
@@ -18,6 +29,10 @@ __all__ = [
     "ModelStats",
     "deploy",
     "make_model_config",
+    "select_executor_backend",
+    "set_vllm_engine_class",
+    "InProcessVLLMEngine",
+    "FusedRayExecutor",
 ]
 
 __version__ = "0.1.0"
