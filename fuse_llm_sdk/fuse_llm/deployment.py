@@ -172,6 +172,22 @@ class FuseModelDeployment:
         if not self._llm_configs:
             raise ValueError("At least one LLMConfig must be provided")
 
+        # Restriction check — done HERE, before any engine is loaded, so a bad
+        # config fails immediately instead of deep inside vLLM after minutes of
+        # model loading.  All models share ONE placement group sized to their
+        # tensor_parallel_size, so every model must use the same TP.
+        tp_by_model = {
+            m: int((c.engine_kwargs or {}).get("tensor_parallel_size", 1))
+            for m, c in self._llm_configs.items()
+        }
+        if len(set(tp_by_model.values())) > 1:
+            raise ValueError(
+                "All models in a FuseModelDeployment must use the same "
+                "tensor_parallel_size — they share a single placement group "
+                f"sized to it. Got per-model tensor_parallel_size: {tp_by_model}."
+            )
+        self._tensor_parallel_size = next(iter(tp_by_model.values()))
+
         # VLLMEngine instances — populated during _initialize()
         self._engines: Dict[str, Any] = {}
 
