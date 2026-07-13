@@ -28,33 +28,6 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 
-def select_executor_backend(
-    tensor_parallel_size: int, nnodes: int = 1
-):
-    """Pick vLLM's ``distributed_executor_backend`` for a GPU-time-sharing engine.
-
-    - ``tensor_parallel_size == 1`` → ``"uni"`` (in-process, no placement group).
-    - ``> 1`` on a single node → ``"mp"`` (local worker processes, no PG).
-    - multi-node → ``"ray"`` (needs Ray worker actors).
-
-    Why not the stock Ray executor for the single-node cases: in a fuse
-    deployment many engines share the **same** GPUs (only one awake at a time
-    via sleep/wake).  ``RayExecutorV2`` reserves whole GPUs per engine
-    exclusively, so N engines would demand N×(GPUs-per-engine) physical GPUs and
-    fail to co-schedule.  ``uni``/``mp`` grab GPUs by ``CUDA_VISIBLE_DEVICES``
-    (invisible to Ray's accounting), so every engine targets the same GPUs and
-    time-shares memory.  For **multi-node** sharing, use
-    :class:`~fuse_llm.fused_ray_executor.FusedRayExecutor` (fractional
-    ``num_gpus`` co-residence) as ``distributed_executor_backend`` instead of
-    ``"ray"``.
-    """
-    if tensor_parallel_size <= 1:
-        return "uni"
-    if nnodes <= 1:
-        return "mp"
-    return "ray"
-
-
 def make_model_config(
     model_id: str,
     model_source: str,
@@ -63,8 +36,6 @@ def make_model_config(
     gpu_memory_utilization: float = 0.9,
     tensor_parallel_size: int = 1,
     enable_sleep_mode: bool = True,
-    distributed_executor_backend=None,
-    nnodes: int = 1,
 ) -> LLMConfig:
     """Create an LLMConfig for a vLLM model in a FuseModelDeployment.
 
@@ -73,21 +44,18 @@ def make_model_config(
     only works when the engine was started with it).
 
     ``tensor_parallel_size`` may be >1; the engines then share the same set of
-    ``tensor_parallel_size`` GPUs and time-share memory via sleep/wake.
-    ``distributed_executor_backend`` defaults to :func:`select_executor_backend`
-    (``uni`` for TP=1, ``mp`` for single-node TP>1).
+    ``tensor_parallel_size`` GPUs and time-share memory via sleep/wake.  All
+    models in one deployment should use the same ``tensor_parallel_size`` (they
+    share a single placement group sized to it).
 
-    IMPORTANT: the stock ``ray.serve.llm`` ``VLLMEngine`` **forces**
-    ``distributed_executor_backend="ray"`` and raises if engine_kwargs sets
-    anything else.  A fuse deployment therefore needs an **in-process** engine
-    (built on ``AsyncLLM``) supplied via
-    :func:`~fuse_llm.deployment.set_vllm_engine_class` for the ``uni``/``mp``/
-    ``FusedRayExecutor`` backends to take effect.
+    The executor is :class:`~fuse_llm.fused_ray_executor.FusedRayExecutor`
+    (set by :class:`~fuse_llm.engines.InProcessVLLMEngine`), which lets every
+    engine co-reside on the deployment's shared GPUs via fractional ``num_gpus``.
+    The stock ``ray.serve.llm`` ``VLLMEngine`` cannot do this (it reserves whole
+    GPUs per engine), so register the in-process engine via
+    :func:`~fuse_llm.deployment.set_vllm_engine_class` and run inside a Ray
+    actor (the ``FuseServeDeployment`` Serve replica does both).
     """
-    if distributed_executor_backend is None:
-        distributed_executor_backend = select_executor_backend(
-            tensor_parallel_size, nnodes
-        )
     return LLMConfig(
         model_loading_config=ModelLoadingConfig(
             model_id=model_id,
@@ -100,7 +68,6 @@ def make_model_config(
             max_model_len=max_model_len,
             max_num_seqs=max_num_seqs,
             enable_sleep_mode=enable_sleep_mode,
-            distributed_executor_backend=distributed_executor_backend,
         ),
     )
 

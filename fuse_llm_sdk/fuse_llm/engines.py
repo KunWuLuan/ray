@@ -3,10 +3,13 @@
 The stock ``ray.serve.llm`` ``VLLMEngine`` forces ``distributed_executor_backend
 = "ray"`` (and rejects overrides), which reserves whole GPUs per engine — unusable
 for GPU time-sharing where many engines share the *same* GPUs.  This engine builds
-vLLM's ``AsyncLLM`` **in-process** and honours the ``distributed_executor_backend``
-from the config (``uni`` / ``mp`` / a custom ``Executor`` class such as
-:class:`~fuse_llm.fused_ray_executor.FusedRayExecutor`), so multiple engines can
-co-reside on the same GPUs and time-share memory via ``sleep``/``wakeup``.
+vLLM's ``AsyncLLM`` **in-process** with
+:class:`~fuse_llm.fused_ray_executor.FusedRayExecutor` and injects the
+deployment-owned shared placement group, so every engine's workers claim a tiny
+GPU fraction and co-reside on the same GPUs, time-sharing memory via
+``sleep``/``wakeup``.  Works for ``tensor_parallel_size >= 1`` (single- or
+multi-node).  All models in one deployment should use the same
+``tensor_parallel_size`` (they share one PG sized to it).
 
 Register it with :func:`~fuse_llm.deployment.set_vllm_engine_class`::
 
@@ -45,24 +48,30 @@ class InProcessVLLMEngine:
         from vllm.v1.engine.async_llm import AsyncLLM
         from transformers import AutoTokenizer
 
-        src = self._source
-        if not os.path.isdir(src):
-            # let vLLM/HF resolve a repo id (offline cache honoured via env)
-            pass
-        kw = dict(
+        from fuse_llm.fused_ray_executor import (
+            FusedRayExecutor,
+            get_or_create_shared_pg,
+        )
+
+        src = self._source  # a local dir or an HF repo id (offline cache honoured)
+        tp = self._ek.get("tensor_parallel_size", 1)
+        args = AsyncEngineArgs(
             model=src,
             enforce_eager=self._ek.get("enforce_eager", True),
             gpu_memory_utilization=self._ek.get("gpu_memory_utilization", 0.3),
             max_model_len=self._ek.get("max_model_len", 4096),
             max_num_seqs=self._ek.get("max_num_seqs", 8),
-            tensor_parallel_size=self._ek.get("tensor_parallel_size", 1),
+            tensor_parallel_size=tp,
             enable_sleep_mode=self._ek.get("enable_sleep_mode", True),
+            distributed_executor_backend=FusedRayExecutor,
         )
-        beb = self._ek.get("distributed_executor_backend")
-        if beb is not None:
-            kw["distributed_executor_backend"] = beb
-        args = AsyncEngineArgs(**kw)
-        self._eng = AsyncLLM.from_engine_args(args)
+        # Inject the deployment-owned shared placement group so all engines
+        # co-reside on the same GPUs (fractional num_gpus). Requires running
+        # inside a Ray actor (FuseServeDeployment / Serve replica) so vLLM
+        # propagates RAY_ADDRESS to the EngineCore subprocess.
+        cfg = args.create_engine_config()
+        cfg.parallel_config.placement_group = get_or_create_shared_pg(tp)
+        self._eng = AsyncLLM.from_vllm_config(cfg)
         self._tok = AutoTokenizer.from_pretrained(src)
 
     def _next_rid(self) -> str:

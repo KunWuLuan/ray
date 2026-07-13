@@ -44,25 +44,30 @@ handle, controller = deploy(
 
 Multiple engines share the same GPUs; only one is awake at a time (sleep/wake),
 so `gpu_memory_utilization` can be high (e.g. 0.9). Set `tensor_parallel_size` in
-`make_model_config`; the executor backend is chosen automatically by
-`select_executor_backend`:
+`make_model_config`.
 
-| topology | backend | placement group? |
-|---|---|---|
-| TP=1 | `uni` (in-process) | no |
-| TP>1, single node | `mp` (local worker procs) | no |
-| TP>1, multi-node | `FusedRayExecutor` (fractional `num_gpus` co-residence) | yes (deployment-owned) |
+**How sharing works.** The deployment owns **one** placement group sized to
+`tensor_parallel_size` GPU bundles. Every engine runs on
+`FusedRayExecutor` — a `RayExecutorV2` subclass whose workers claim a tiny GPU
+*fraction*, so they all co-reside on that shared PG's GPUs (Ray fractional-GPU
+scheduling). GPU memory is time-shared by sleep/wake. This is the single backend
+for all topologies (TP=1, TP>1, single- or multi-node).
 
-**Engine requirement**: the stock `ray.serve.llm` `VLLMEngine` forces
-`distributed_executor_backend="ray"` (exclusive whole-GPU reservation, which
-can't share) and rejects overrides. Use the in-process engine so the chosen
-backend takes effect:
+`InProcessVLLMEngine` (the default engine) builds vLLM's `AsyncLLM` in-process
+with `FusedRayExecutor` and injects the shared PG. The stock `ray.serve.llm`
+`VLLMEngine` **can't** do this — it forces `distributed_executor_backend="ray"`
+and reserves whole GPUs per engine — so it isn't used.
+
+**Requirement**: engines must be created inside a **Ray actor** (so vLLM
+propagates `RAY_ADDRESS` to the EngineCore subprocess and the shared PG
+resolves). `FuseServeDeployment` (a Serve replica) satisfies this automatically.
+All models in one deployment should use the same `tensor_parallel_size`.
 
 ```python
-from fuse_llm import set_vllm_engine_class, InProcessVLLMEngine, make_model_config
-set_vllm_engine_class(InProcessVLLMEngine)
+from fuse_llm import make_model_config, deploy
 cfgs = [make_model_config("m1", "/models/m1", tensor_parallel_size=4),
         make_model_config("m2", "/models/m2", tensor_parallel_size=4)]
+handle, controller = deploy(cfgs)   # runs as a Serve replica (Ray actor)
 ```
 
 Validated on 8× RTX PRO 5000: 2 engines × TP=4 (Qwen2.5-7B) sharing 4 GPUs,

@@ -16,7 +16,6 @@ from fuse_llm.controller import TrafficAwareController
 from fuse_llm.deploy import (
     deploy,
     make_model_config,
-    select_executor_backend,
     FuseServeDeployment,
 )
 from fuse_llm.engines import InProcessVLLMEngine
@@ -29,7 +28,6 @@ __all__ = [
     "ModelStats",
     "deploy",
     "make_model_config",
-    "select_executor_backend",
     "set_vllm_engine_class",
     "InProcessVLLMEngine",
     "FusedRayExecutor",

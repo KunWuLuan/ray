@@ -66,9 +66,13 @@ def _get_vllm_engine_class():
         _VLLM_ENGINE_CLS = getattr(module, class_name)
         return _VLLM_ENGINE_CLS
 
-    from ray.llm._internal.serve.engines.vllm.vllm_engine import VLLMEngine
+    # Default: the in-process AsyncLLM engine using FusedRayExecutor + the
+    # deployment's shared placement group.  (The stock ray.serve.llm VLLMEngine
+    # forces distributed_executor_backend="ray" and reserves whole GPUs per
+    # engine, so it cannot time-share GPUs across engines.)
+    from fuse_llm.engines import InProcessVLLMEngine
 
-    _VLLM_ENGINE_CLS = VLLMEngine
+    _VLLM_ENGINE_CLS = InProcessVLLMEngine
     return _VLLM_ENGINE_CLS
 
 

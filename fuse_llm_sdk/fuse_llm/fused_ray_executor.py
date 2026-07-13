@@ -33,10 +33,47 @@ Usage (the deployment owns the placement group and passes it in via
     engine = AsyncLLM.from_vllm_config(vllm_config)
 """
 
-from typing import Any, Dict
+from typing import Any, Dict, Optional
 
 from vllm.platforms import current_platform
 from vllm.v1.executor.ray_executor_v2 import RayExecutorV2
+
+
+# ---------------------------------------------------------------------------
+# Deployment-owned shared placement group
+# ---------------------------------------------------------------------------
+# All engines in a fuse deployment share the SAME set of GPUs. That only works
+# if they share a single placement group (each engine's workers then claim a
+# tiny GPU fraction — see FusedRayExecutor — and co-reside on its bundles).
+# If every engine created its own PG, each would reserve whole GPUs exclusively
+# and they could not co-schedule. So the deployment creates ONE shared PG here.
+
+_SHARED_PG = None
+
+
+def get_or_create_shared_pg(num_gpus: int, strategy: str = "PACK"):
+    """Return the process-wide shared placement group (``num_gpus`` GPU bundles),
+    creating it on first call. Idempotent; must be called inside a Ray context
+    (i.e. from the FuseModelDeployment / Serve actor)."""
+    global _SHARED_PG
+    if _SHARED_PG is None:
+        import ray
+
+        _SHARED_PG = ray.util.placement_group(
+            [{"GPU": 1.0} for _ in range(num_gpus)], strategy=strategy
+        )
+        ray.get(_SHARED_PG.ready())
+    return _SHARED_PG
+
+
+def get_shared_pg() -> Optional[Any]:
+    return _SHARED_PG
+
+
+def reset_shared_pg() -> None:
+    """Drop the reference (test helper); does not remove the PG from Ray."""
+    global _SHARED_PG
+    _SHARED_PG = None
 
 
 class FusedRayExecutor(RayExecutorV2):
