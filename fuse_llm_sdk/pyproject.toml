@@ -25,3 +25,6 @@ dev = [
 
 [tool.setuptools.packages.find]
 include = ["fuse_llm*"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"

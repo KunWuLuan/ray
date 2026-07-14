@@ -2,9 +2,12 @@
 
 Public API
 ----------
-- :class:`FuseModelDeployment` — single-actor multi-model deployment
-- :class:`TrafficAwareController` — traffic-aware switching controller
+- :class:`FuseModelDeployment` — single-actor multi-model deployment; a
+  combination (subset) of models is awake at a time
 - :func:`deploy` — one-line deployment helper
+- :func:`switch_combination` — switch the awake combination (sleep/wake)
+- :class:`TrafficAwareController` — legacy switching controller (pending a
+  combination-aware rewrite)
 """
 
 from fuse_llm.deployment import (
@@ -18,6 +21,7 @@ from fuse_llm.deploy import (
     make_model_config,
     FuseServeDeployment,
 )
+from fuse_llm.client import switch_combination
 from fuse_llm.engines import InProcessVLLMEngine
 from fuse_llm.fused_ray_executor import FusedRayExecutor
 
@@ -28,6 +32,7 @@ __all__ = [
     "ModelStats",
     "deploy",
     "make_model_config",
+    "switch_combination",
     "set_vllm_engine_class",
     "InProcessVLLMEngine",
     "FusedRayExecutor",

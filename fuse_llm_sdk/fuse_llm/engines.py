@@ -55,16 +55,21 @@ class InProcessVLLMEngine:
 
         src = self._source  # a local dir or an HF repo id (offline cache honoured)
         tp = self._ek.get("tensor_parallel_size", 1)
-        args = AsyncEngineArgs(
-            model=src,
-            enforce_eager=self._ek.get("enforce_eager", True),
-            gpu_memory_utilization=self._ek.get("gpu_memory_utilization", 0.3),
-            max_model_len=self._ek.get("max_model_len", 4096),
-            max_num_seqs=self._ek.get("max_num_seqs", 8),
-            tensor_parallel_size=tp,
-            enable_sleep_mode=self._ek.get("enable_sleep_mode", True),
-            distributed_executor_backend=FusedRayExecutor,
-        )
+
+        # Forward ALL engine_kwargs to vLLM (they are AsyncEngineArgs fields),
+        # so throughput knobs such as ``max_num_batched_tokens`` and
+        # ``enable_chunked_prefill`` reach the engine instead of being dropped.
+        # Fill defaults only for keys the caller omitted, and force the ones
+        # this backend must own.
+        ek = dict(self._ek)
+        ek.setdefault("enforce_eager", True)
+        ek.setdefault("gpu_memory_utilization", 0.3)
+        ek.setdefault("max_model_len", 4096)
+        ek.setdefault("max_num_seqs", 8)
+        ek.setdefault("enable_sleep_mode", True)
+        ek["tensor_parallel_size"] = tp
+        ek["distributed_executor_backend"] = FusedRayExecutor
+        args = AsyncEngineArgs(model=src, **ek)
         # Inject the deployment-owned shared placement group so all engines
         # co-reside on the same GPUs (fractional num_gpus). Requires running
         # inside a Ray actor (FuseServeDeployment / Serve replica) so vLLM

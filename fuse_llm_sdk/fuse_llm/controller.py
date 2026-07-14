@@ -1,5 +1,16 @@
 """TrafficAwareController: traffic-driven model switching for FuseModelDeployment.
 
+.. warning::
+   **Pending rewrite.** This controller targets the pre-combination,
+   single-active-model API (``switch_model`` / ``active_model``) and its
+   automatic triggers rely on requests *queueing* for a sleeping model.  The
+   deployment now uses combinations (``switch_combination`` / ``active_models``)
+   and **rejects** requests for non-awake models, so nothing queues and these
+   triggers never fire.  ``deploy()`` no longer starts it by default
+   (``start_controller=False``).  It is kept for reference until a
+   combination-aware controller replaces it; use ``switch_combination`` for
+   explicit switching in the meantime.
+
 The controller periodically polls the :class:`FuseModelDeployment` for
 runtime statistics (QPS, queue depth, in-flight requests) and decides
 when to switch the active model.

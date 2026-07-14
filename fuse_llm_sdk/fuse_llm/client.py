@@ -26,8 +26,9 @@ def send_chat_request(
 ) -> Dict[str, Any]:
     """Send a chat completion request to the FuseModelDeployment.
 
-    If the requested model is currently sleeping, the request will
-    block (up to 5 minutes) until the controller switches to it.
+    The requested model must be in the currently-awake combination; if it is
+    asleep the deployment rejects the request.  Wake it first with
+    :func:`switch_combination`.
     """
     import requests
 
@@ -100,8 +101,44 @@ def send_streaming_request(
 # ---------------------------------------------------------------------------
 
 
+def switch_combination(
+    handle: Any,
+    models: list,
+    sleep_level: int = 1,
+    drain_timeout: float = None,
+) -> bool:
+    """Switch the deployment's awake combination to exactly ``models``.
+
+    Talks to the :class:`FuseModelDeployment` handle directly (no controller).
+    Sleeps the models leaving the awake set and wakes the ones entering it.
+
+    Parameters
+    ----------
+    handle:
+        A Ray Serve / Actor handle to the deployment.
+    models:
+        The exact list of ``model_id`` values to be awake afterwards.
+    sleep_level:
+        vLLM sleep level (1 or 2) for the models being slept.
+    drain_timeout:
+        Optional override for the in-flight drain timeout.
+    """
+    import ray
+
+    return ray.get(
+        handle.switch_combination.remote(
+            models, drain_timeout=drain_timeout, sleep_level=sleep_level
+        )
+    )
+
+
+# NOTE: the helpers below drive the TrafficAwareController, which targets the
+# pre-combination single-model API and is pending a rewrite (see
+# fuse_llm.controller).  Prefer switch_combination() above until then.
+
+
 def force_switch(controller_handle: Any, target_model: str) -> bool:
-    """Force the controller to switch to a specific model."""
+    """Force the controller to switch to a specific model (legacy)."""
     import ray
 
     return ray.get(controller_handle.force_switch.remote(target_model))
