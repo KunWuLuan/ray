@@ -1,0 +1,4 @@
+2026-07-15 10:00:00	INFO streaming_executor.py:190 -- Starting execution of Dataset dataset_1.
+2026-07-15 10:00:20	DEBUG streaming_executor.py:700 -- Execution Progress:
+0: ReadParquet - Tasks: 8; Queued blocks: 40 (4.0GB); Resources: 8.0 CPU
+1: MapBatches(preprocess) - Tasks: 16; Queued blocks: 2 (0.2GB); Resources: 16.0 CPU

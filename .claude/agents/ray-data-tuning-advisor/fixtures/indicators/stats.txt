@@ -1,0 +1,11 @@
+Operator 1 ReadParquet: 100 tasks executed, 100 blocks produced in 20s
+* Remote wall time: 0.1s min, 0.5s max, 0.2s mean, 20s total
+* Output size bytes per block: 100MB min, 100MB max, 100MB mean, 10GB total
+* Tasks per node: 90 min, 10 max, 50 mean, 2 nodes used
+Operator 2 MapBatches(preprocess): 100 tasks executed, 100 blocks produced in 80s
+* Remote wall time: 0.5s min, 1.5s max, 0.8s mean, 80s total
+Cluster memory:
+* Spilled to disk: 4096MB
+* Restored from disk: 4096MB
+Dataset throughput:
+* Ray Data throughput: 5000 rows/s
