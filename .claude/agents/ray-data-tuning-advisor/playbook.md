@@ -61,7 +61,7 @@ Compute each from whatever inputs exist. Show the value and the inputs used.
 | `pool_utilization` | `ray_data_pool_utilization`; with `num_pending`/`num_idle_actors` | ~1.0 pinned = under-provisioned; low with idle actors = over-provisioned |
 | `block_size_profile` | `Output size bytes per block` / `block_size_bytes` histogram | >~512MB/block risks OOM/spill; very small blocks = task overhead |
 | `read_parallelism_ratio` | read blocks ÷ cluster CPU slots | >4 triggers the over-parallelism warning |
-| `tasks_per_node_skew` | `Tasks per node` max ÷ mean (or `*_per_node` metrics) | >>1 indicates imbalance/locality issues |
+| `tasks_per_node_skew` | `Tasks per node` max ÷ min (or `*_per_node` metrics) | >>1 indicates imbalance/locality issues |
 | `time_to_first_batch` / `iter_blocked` | `ray_data_iter_time_to_first_batch_seconds` / `iter_total_blocked_seconds` | large = consumer (trainer) starvation |
 
 Report indicators you could not compute as "unavailable (missing <input>)".
