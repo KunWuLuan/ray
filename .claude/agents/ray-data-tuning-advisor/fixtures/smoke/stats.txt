@@ -1,0 +1,6 @@
+Operator 1 ReadRange->Map(f): 1 tasks executed, 1 blocks produced in 0.5s
+* Remote wall time: 0.5s min, 0.5s max, 0.5s mean, 0.5s total
+* Remote cpu time: 0.4s min, 0.4s max, 0.4s mean, 0.4s total
+* Output num rows per block: 1000 min, 1000 max, 1000 mean, 1000 total
+Dataset throughput:
+* Ray Data throughput: 2000 rows/s
