@@ -1,0 +1,4 @@
+metric,operator,value
+ray_data_task_submission_backpressure_time,MapBatches(embed),140
+ray_data_object_store_memory_budget,MapBatches(embed),0
+ray_data_memory_budget,MapBatches(embed),0

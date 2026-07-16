@@ -124,6 +124,40 @@ to cite**. A symptom fires only when its confirming signals are present.
      rather than more tasks. → KubeRay: larger pods or a dedicated worker group.
 - **Evidence to cite:** the dominating op's wall-time share vs the runner-up.
 
+### S4. Submission backpressure / budget starvation
+- **Confirming signals:** `submission_backpressure_share` high;
+  `ray_data_object_store_memory_budget` / `ray_data_memory_budget` near 0;
+  resource-starvation warning (`Cluster resources are not enough to run any task`).
+- **Root cause:** an operator cannot launch new tasks because it is out of
+  resource budget (object store / memory / CPU) — the cluster is too small or
+  resources are reserved elsewhere.
+- **Ranked remediations:**
+  1. Add cluster capacity for the starved resource (pods). → KubeRay: raise the
+     relevant worker-group `replicas`/`maxReplicas` (and pod requests).
+  2. Give Ray Data more of the existing cluster:
+     `execution_options.resource_limits`, or remove an over-broad
+     `execution_options.exclude_resources`.
+  3. If object-store-bound, apply the S1 spilling remedies (smaller blocks / more
+     object-store memory).
+- **Evidence to cite:** the starvation warning line and the zero budget value.
+
+### S5. Consumer / trainer starvation
+- **Confirming signals:** high `output_backpressure_share`; large
+  `ray_data_iter_total_blocked_seconds`; large
+  `ray_data_iter_time_to_first_batch_seconds` (or the stats "Time to first batch"
+  / "Total time user thread blocked").
+- **Root cause:** the downstream consumer (e.g. a Ray Train loop) spends its time
+  waiting on Ray Data — the pipeline can't produce batches fast enough, or
+  prefetch is too shallow.
+- **Ranked remediations:**
+  1. Increase upstream `concurrency=` on the bottleneck op and cluster capacity.
+     → KubeRay: raise worker-group `replicas`/`maxReplicas`.
+  2. Increase prefetch depth (`prefetch_batches` on the iterator) so batches are
+     ready before the trainer asks.
+  3. Move work off the critical path: precompute/cache expensive transforms, or
+     `.materialize()` a reusable stage across epochs.
+- **Evidence to cite:** time-to-first-batch and total-blocked figures.
+
 ## Section 3 — Recommendation catalog (levers)
 
 Draw remediations from these four levers, always by exact knob name:

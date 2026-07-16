@@ -1,0 +1,4 @@
+Dataset iterator time breakdown:
+* Time to first batch: 45.0s
+* Total time user thread blocked: 210.0s
+* Total execution time: 300.0s
