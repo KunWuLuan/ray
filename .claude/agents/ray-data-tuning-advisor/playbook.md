@@ -159,6 +159,49 @@ to cite**. A symptom fires only when its confirming signals are present.
      `.materialize()` a reusable stage across epochs.
 - **Evidence to cite:** time-to-first-batch and total-blocked figures.
 
+### S6. Actor pool won't scale
+- **Confirming signals:** the warning `will not allow it to scale up`; or
+  `pool_utilization` pinned high with `num_pending_actors` stuck > 0 and pool at
+  `max_size`.
+- **Root cause:** the actor pool's configured ceiling
+  (`max_tasks_in_flight_per_actor / max_concurrency`) can't reach the upscaling
+  threshold, or there are no pods to place new actors on.
+- **Ranked remediations:**
+  1. Raise `max_tasks_in_flight_per_actor` (allow more concurrent tasks per
+     actor) so utilization can climb, or lower
+     `actor_pool_util_upscaling_threshold`.
+  2. Raise the actor pool `max_size` (via `compute=ActorPoolStrategy(max_size=)`
+     / `concurrency=`). → KubeRay: raise the worker-group `maxReplicas` so the
+     actors have pods (GPU actors need one GPU slot each).
+- **Evidence to cite:** the "will not allow it to scale up" line, or pinned
+  utilization + pending actors.
+
+### S7. Read over-parallelization
+- **Confirming signals:** the warning `is more than 4x the number of available
+  CPU slots`; `read_parallelism_ratio` > 4; very many tiny read blocks.
+- **Root cause:** too many read tasks/blocks create scheduling overhead that
+  dominates the read phase.
+- **Ranked remediations:**
+  1. Lower `override_num_blocks` (or set it to `-1` to let Ray Data auto-tune).
+  2. Raise `read_op_min_num_blocks` only if under-parallelized elsewhere.
+  3. Ignore if the cluster is expected to autoscale up substantially (state the
+     caveat).
+- **Evidence to cite:** the ">4x CPU slots" warning with its two numbers.
+
+### S8. Block-size pathology
+- **Confirming signals:** `block_size_profile` far from target — blocks
+  >~512MB (OOM/spill risk, ties to S1) or extremely small (task overhead
+  dominates, ties to S7); large-block warning
+  (`exceeds DataContext.get_current().target_shuffle_max_block_size`).
+- **Root cause:** block sizing mismatched to the workload/memory budget.
+- **Ranked remediations:**
+  1. Too large: lower `target_max_block_size` (and `target_shuffle_max_block_size`
+     before shuffles); `.materialize()` before a shuffle to prevent fusing large
+     map blocks into it.
+  2. Too small: raise `target_max_block_size` / reduce `override_num_blocks` so
+     tasks do more work each.
+- **Evidence to cite:** the per-block byte profile and any large-block warning.
+
 ## Section 3 — Recommendation catalog (levers)
 
 Draw remediations from these four levers, always by exact knob name:

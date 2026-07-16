@@ -1,0 +1,1 @@
+2026-07-15 13:00:10	WARNING default_actor_autoscaler.py:233 -- ⚠️  Actor Pool configuration of the MapBatches(gpu_infer) will not allow it to scale up: configured utilization threshold (80%) couldn't be reached with configured max_concurrency=1 and max_tasks_in_flight_per_actor=1 (max utilization will be max_tasks_in_flight_per_actor / max_concurrency = 100%).

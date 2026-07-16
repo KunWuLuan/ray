@@ -1,0 +1,1 @@
+2026-07-15 13:05:00	WARNING set_read_parallelism.py:66 -- ⚠️  The requested number of read blocks of 4000 is more than 4x the number of available CPU slots in the cluster of 200. This can lead to slowdowns during the data reading phase due to excessive task creation. Reduce the value or set override_num_blocks to -1.
