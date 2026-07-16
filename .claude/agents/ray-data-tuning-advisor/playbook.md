@@ -297,4 +297,47 @@ worker group's `maxReplicas` can host, raise `maxReplicas` too — otherwise the
 pool is capped regardless of `pool_utilization`.
 
 ## Section 5 — Signal-reference appendix
-(Every ray_data_* metric + warning string. Filled in Task 8.)
+
+Two purposes: (a) a lookup of every known signal, and (b) a **catch-all rule** so
+nothing is silently dropped.
+
+**Catch-all rule:** if the inputs contain a `ray_data_*` metric, a `WARNING`/
+`ERROR` line, or a detector message that does NOT match any symptom S1–S12,
+surface it under "What I couldn't assess" as an *unclassified signal* with the
+verbatim line, and suggest what it might indicate. Never ignore a warning.
+
+### Known metric families (Prometheus `ray_data_*`)
+- Overview: `spilled_bytes`, `freed_bytes`, `current_bytes`, `cpu_usage_cores`,
+  `gpu_usage_cores`, `output_bytes`, `output_rows`.
+- Inputs/Outputs: `num_inputs_received`, `bytes_task_outputs_generated`,
+  `rows_task_outputs_generated`, queue block/byte counts.
+- Tasks: `num_tasks_{submitted,running,finished,failed}`,
+  `task_submission_backpressure_time`, `task_output_backpressure_time`,
+  `block_size_bytes` (histogram), `task_completion_time` (histogram).
+- Actors: `num_{alive,restarting,pending,active,idle}_actors`,
+  `pool_utilization`, `num_tasks_in_flight`.
+- Object store: `obj_store_mem_{used,spilled,freed}`,
+  internal in/out-queue blocks/bytes.
+- Budgets: `cpu_budget`, `gpu_budget`, `memory_budget`,
+  `object_store_memory_budget`, `max_bytes_to_read`.
+- Iteration: `iter_time_to_first_batch_seconds`, `iter_total_blocked_seconds`,
+  `iter_user_seconds`, `iter_*` timers, `iter_blocks_{local,remote}`.
+- Per-node: `*_per_node`. Cluster: `cluster_{cpu,gpu,mem,object_store_memory}_utilization`.
+- State/metadata: `dataset_state`, `operator_state`, `operator_queued_blocks`,
+  `*_estimated_total_{blocks,rows}`.
+
+### Known warning strings → symptom
+| Warning substring | Symptom |
+|---|---|
+| `has no outputs for` | S11 |
+| `has been running or stuck in scheduling for` | S11 |
+| `waiting for metadata from operator` | S11 |
+| `of memory per task on average, but Ray only requests` | S1 |
+| `Cluster resources are not enough to run any task` | S4 |
+| `is more than 4x the number of available CPU slots` | S7 |
+| `will not allow it to scale up` | S6 |
+| `exceeds DataContext.get_current().target_shuffle_max_block_size` | S8 |
+| `hash shuffle` (insufficient CPU/memory) / `aggregators are ready after` | S9 |
+| `estimated to use at least` + `driver memory` | S12 |
+
+Anything not in these tables → catch-all rule.

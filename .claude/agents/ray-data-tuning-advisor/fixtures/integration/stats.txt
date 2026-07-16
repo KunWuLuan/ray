@@ -1,0 +1,10 @@
+Operator 1 ReadImages: 1000 tasks executed, 1000 blocks produced in 400s
+* Remote wall time: 0.2s min, 1.0s max, 0.4s mean, 400s total
+* Output size bytes per block: 550MB min, 800MB max, 650MB mean, 650GB total
+Operator 2 MapBatches(gpu_infer): 1000 tasks executed, 1000 blocks produced in 90s
+* Remote wall time: 0.05s min, 0.2s max, 0.09s mean, 90s total
+Cluster memory:
+* Spilled to disk: 40960MB
+* Restored from disk: 40960MB
+Dataset throughput:
+* Ray Data throughput: 1200 rows/s

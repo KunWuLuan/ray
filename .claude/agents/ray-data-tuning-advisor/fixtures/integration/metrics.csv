@@ -1,0 +1,4 @@
+metric,operator,value
+ray_data_spilled_bytes,ReadImages,42949672960
+ray_data_gpu_usage_cores,MapBatches(gpu_infer),0.35
+ray_data_pool_utilization,MapBatches(gpu_infer),0.3
