@@ -67,13 +67,64 @@ Compute each from whatever inputs exist. Show the value and the inputs used.
 Report indicators you could not compute as "unavailable (missing <input>)".
 
 ## Section 2 — Symptom taxonomy
-(One entry per symptom. Filled in Tasks 3–7.)
 
-## Section 3 — Recommendation catalog
-(Exact knob names per lever. Filled in Tasks 3–7.)
+Each entry: **Confirming signals → Root cause → Ranked remediations → Evidence
+to cite**. A symptom fires only when its confirming signals are present.
+
+### S1. Object-store spilling / OOM
+- **Confirming signals:** `spill_ratio` > 0 (esp. > 0.2); `Spilled to disk` /
+  `ray_data_spilled_bytes` large; high-memory-detector warning
+  (`of memory per task on average, but Ray only requests`); `block_size_profile`
+  large (>~512MB/block).
+- **Root cause:** blocks and/or per-task working set exceed available
+  object-store / heap memory, forcing spill to disk (and slowdowns / OOM risk).
+- **Ranked remediations:**
+  1. Reduce block size: lower `DataContext.target_max_block_size` (config) so
+     each task holds less in memory. → pod: no change needed.
+  2. Declare the real per-task memory: set `memory=<observed>` on the map op
+     (per-op) so the scheduler packs fewer tasks per node. → KubeRay: ensure pod
+     memory ÷ concurrency ≥ that value.
+  3. Raise object-store memory: larger `object_store_memory` (pod). → KubeRay:
+     bump worker-group pod `memory` request + `rayStartParams.object-store-memory`,
+     or add a worker group / raise `maxReplicas`.
+  4. Cap concurrency if upstream floods a slow op: `concurrency=` / backpressure.
+- **Evidence to cite:** the exact spilled-MB figure and the high-memory warning line.
+
+## Section 3 — Recommendation catalog (levers)
+
+Draw remediations from these four levers, always by exact knob name:
+
+- **Config** (`DataContext` / `ExecutionOptions`): `target_max_block_size`,
+  `target_shuffle_max_block_size`, `override_num_blocks`,
+  `read_op_min_num_blocks`, `execution_options.resource_limits`,
+  `execution_options.exclude_resources`, `actor_pool_util_upscaling_threshold`,
+  `shuffle_strategy`, `max_hash_shuffle_aggregators`, issue-detector configs.
+- **Per-op call args**: `concurrency=`, `compute=` (ActorPoolStrategy),
+  `num_cpus=`, `num_gpus=`, `memory=`, `batch_size=`, operator fusion,
+  `.materialize()` before shuffle.
+- **Pod size**: worker-group CPU/memory/GPU requests, `--num-cpus`,
+  `object_store_memory`, head-node memory.
+- **Autoscaling**: RayCluster autoscaler `minReplicas`/`maxReplicas` per worker
+  group, actor-pool min/max size.
 
 ## Section 4 — KubeRay translation table
-(Ray knob → pod/worker-group/autoscaler expression. Filled in Task 3.)
+
+Every recommendation is emitted as `Ray knob → KubeRay translation`.
+
+| Ray-level knob | KubeRay / pod expression |
+|---|---|
+| Raise `object_store_memory` | Increase worker-group pod `resources.requests.memory` and set `rayStartParams: { object-store-memory: "<bytes>" }`; or add a worker group / raise its `maxReplicas` |
+| Raise per-task `memory=` | Ensure worker-group pod memory ÷ per-pod concurrency ≥ the requested per-task memory; enlarge pod memory request if not |
+| More `num_cpus` capacity / concurrency | Raise worker-group `replicas`/`maxReplicas` or pod `resources.requests.cpu` + `rayStartParams.num-cpus` |
+| More GPUs for a GPU op | Add/enlarge a GPU worker group (`nvidia.com/gpu` request) and its `minReplicas`/`maxReplicas` |
+| Actor pool min/max size | Align worker-group `minReplicas`/`maxReplicas` so the pool's max actors fit; GPU actors need one GPU slot each |
+| Reduce driver memory pressure | Increase head-group pod `resources.requests.memory` |
+| `exclude_resources` for non-Data workloads | Reflect co-located non-Data pods; or isolate Ray Data onto a dedicated worker group |
+
+Autoscaling note: Ray Data actor-pool scaling operates within the pods the
+KubeRay autoscaler provides. If the actor pool wants more actors than the
+worker group's `maxReplicas` can host, raise `maxReplicas` too — otherwise the
+pool is capped regardless of `pool_utilization`.
 
 ## Section 5 — Signal-reference appendix
 (Every ray_data_* metric + warning string. Filled in Task 8.)

@@ -1,0 +1,1 @@
+2026-07-15 11:00:05	WARNING high_memory_detector.py:25 -- Operator 'MapBatches(embed)' uses 3.2GiB of memory per task on average, but Ray only requests 0.5GiB per task at the start of the pipeline. To avoid out-of-memory errors, consider setting `memory=3.2GiB` in the appropriate function or method call.
