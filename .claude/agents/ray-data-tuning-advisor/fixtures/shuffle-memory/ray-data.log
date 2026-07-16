@@ -1,0 +1,2 @@
+2026-07-15 14:00:00	WARNING hash_shuffle.py:1532 -- Insufficient memory resources in cluster for hash shuffle operation. Required: 400 GiB for 64 aggregators, but cluster only has 256 GiB total memory. Consider reducing the number of partitions or increasing cluster size.
+2026-07-15 14:00:01	WARNING hash_shuffle_detector.py:128 -- Only 40 out of 64 hash-shuffle aggregators are ready after 120.0 secs. This might indicate resource contention for cluster resources.

@@ -1,0 +1,2 @@
+2026-07-15 15:00:00	WARNING streaming_executor_state.py:107 -- Operator MapBatches(embed) is running but has no outputs for 90 seconds. Execution may be slower than expected.
+2026-07-15 15:00:30	WARNING hanging_detector.py:130 -- A task (task_id=abc123) of operator MapBatches(embed) (pid=42, node_id=n1, attempt=0) has been running or stuck in scheduling for 300.00s, which is longer than the average task duration + z-score * stddev of this operator (2.00 + 10 * 1.00s).

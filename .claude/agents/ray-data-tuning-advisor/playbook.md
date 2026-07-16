@@ -202,6 +202,60 @@ to cite**. A symptom fires only when its confirming signals are present.
      tasks do more work each.
 - **Evidence to cite:** the per-block byte profile and any large-block warning.
 
+### S9. Shuffle / join memory pressure
+- **Confirming signals:** warnings `Insufficient memory resources in cluster for
+  hash shuffle` / `Insufficient CPU resources in cluster for hash shuffle` /
+  `hash-shuffle aggregators are ready after` / per-aggregator memory clamp.
+- **Root cause:** hash-shuffle/join aggregators need more memory/CPU than the
+  cluster has, so they start slowly or spill.
+- **Ranked remediations:**
+  1. Reduce `DataContext.max_hash_shuffle_aggregators` or the number of
+     partitions to shrink per-aggregator demand.
+  2. Increase cluster memory/CPU. → KubeRay: larger worker-group pod
+     `memory`/`cpu` requests or higher `maxReplicas`.
+  3. Consider `shuffle_strategy` alternatives for the workload.
+- **Evidence to cite:** the insufficient-resources / aggregators-not-ready lines.
+
+### S10. Data skew / imbalance
+- **Confirming signals:** `tasks_per_node_skew` ≫ 1; imbalanced `*_per_node`
+  metrics.
+- **Root cause:** work or data is unevenly distributed across nodes (locality
+  pinning or skewed keys), so some nodes idle while others are hot.
+- **Ranked remediations:**
+  1. Increase parallelism / repartition so blocks spread more evenly
+     (`override_num_blocks`), or use a shuffle to rebalance skewed keys.
+  2. Relax locality if a single node is over-targeted
+     (`execution_options.locality_with_output`).
+  3. Right-size the pool so hot nodes aren't the only capacity. → KubeRay: even
+     worker-group replicas across nodes.
+- **Evidence to cite:** the tasks-per-node max vs mean.
+
+### S11. Hang / stall
+- **Confirming signals:** idle-detector (`has no outputs for`), hanging-detector
+  (`has been running or stuck in scheduling for`), or metadata-fetch timeout
+  (`waiting for metadata from operator`).
+- **Root cause:** a task is stuck (slow/hung UDF, worker crash, node preemption,
+  or resource starvation preventing any task from running).
+- **Ranked remediations:**
+  1. Inspect the stuck task's stack trace and the node's health (dashboard/logs)
+     — the hanging-detector gives task_id/pid/node_id.
+  2. If it's resource starvation (see S4), scale the cluster. → KubeRay: raise
+     worker-group `maxReplicas`.
+  3. If the UDF is legitimately slow, this is benign — tune expectations or the
+     hanging-detector z-score. (Confidence caveat.)
+- **Evidence to cite:** the idle/hanging lines with their durations and ids.
+
+### S12. Driver memory pressure
+- **Confirming signals:** the warning `estimated to use at least <N> of driver
+  memory` (usually pull-based shuffle at scale).
+- **Root cause:** the driver aggregates too much shuffle metadata/state.
+- **Ranked remediations:**
+  1. Switch to push-based shuffle (`RAY_DATA_DEFAULT_SHUFFLE_STRATEGY`) to reduce
+     driver memory.
+  2. Increase head-node memory. → KubeRay: raise the head-group pod `memory`
+     request.
+- **Evidence to cite:** the driver-memory estimate line.
+
 ## Section 3 — Recommendation catalog (levers)
 
 Draw remediations from these four levers, always by exact knob name:
@@ -209,9 +263,11 @@ Draw remediations from these four levers, always by exact knob name:
 - **Config** (`DataContext` / `ExecutionOptions`): `target_max_block_size`,
   `target_shuffle_max_block_size`, `override_num_blocks`,
   `read_op_min_num_blocks`, `execution_options.resource_limits`,
-  `execution_options.exclude_resources`, `actor_pool_util_upscaling_threshold`,
+  `execution_options.exclude_resources`, `execution_options.locality_with_output`,
+  `actor_pool_util_upscaling_threshold`,
   `max_tasks_in_flight_per_actor`,
-  `shuffle_strategy`, `max_hash_shuffle_aggregators`, issue-detector configs.
+  `shuffle_strategy`, `RAY_DATA_DEFAULT_SHUFFLE_STRATEGY` (push-based shuffle),
+  `max_hash_shuffle_aggregators`, issue-detector configs.
 - **Per-op call args**: `concurrency=`, `compute=` (ActorPoolStrategy),
   `num_cpus=`, `num_gpus=`, `memory=`, `batch_size=`,
   `prefetch_batches` (iterator prefetch depth), `max_concurrency` (actor),
