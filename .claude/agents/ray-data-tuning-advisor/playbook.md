@@ -90,6 +90,40 @@ to cite**. A symptom fires only when its confirming signals are present.
   4. Cap concurrency if upstream floods a slow op: `concurrency=` / backpressure.
 - **Evidence to cite:** the exact spilled-MB figure and the high-memory warning line.
 
+### S2. GPU underutilized
+- **Confirming signals:** `gpu_busy_fraction` < 0.5 while a GPU operator exists
+  (op with `num_gpus`>0 or a low `ray_data_gpu_usage_cores`); GPU-op
+  `pool_utilization` low; GPU-op wall-time share small relative to an upstream
+  CPU op.
+- **Root cause:** the GPU stage is starved — usually CPU-bound preprocessing
+  upstream can't feed it, or `batch_size`/`concurrency` on the GPU op is too low
+  to saturate the device.
+- **Ranked remediations:**
+  1. Scale upstream CPU preprocessing: raise its `concurrency=` / add CPU pods
+     so it keeps the GPU fed. → KubeRay: raise the CPU worker-group
+     `replicas`/`maxReplicas`.
+  2. Increase GPU throughput per actor: raise `batch_size=` on the GPU op (larger
+     batches per forward pass) and/or `max_concurrency` of the actor.
+  3. Right-size the GPU actor pool: raise `concurrency=`/actor-pool max if GPUs
+     are idle. → KubeRay: ensure the GPU worker group `maxReplicas` provides
+     enough GPU slots.
+- **Evidence to cite:** GPU usage/pool-utilization value and the upstream CPU op's
+  wall-time share.
+
+### S3. One operator dominates wall time
+- **Confirming signals:** a single op's `per_op_walltime_share` ≫ others (e.g.
+  > 60%).
+- **Root cause:** that operator is the pipeline bottleneck; everything else waits
+  on it.
+- **Ranked remediations:**
+  1. Raise that op's `concurrency=` (more parallel tasks/actors). → KubeRay:
+     ensure worker-group capacity (CPU/GPU pods) can host the added parallelism.
+  2. If it is a cheap adjacent op being run separately, allow operator fusion
+     (avoid an unnecessary `.materialize()` between it and its neighbor).
+  3. If per-task cost is inherent, give it more resources (`num_cpus=`/`num_gpus=`)
+     rather than more tasks. → KubeRay: larger pods or a dedicated worker group.
+- **Evidence to cite:** the dominating op's wall-time share vs the runner-up.
+
 ## Section 3 — Recommendation catalog (levers)
 
 Draw remediations from these four levers, always by exact knob name:

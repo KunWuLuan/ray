@@ -1,0 +1,4 @@
+metric,operator,value
+ray_data_gpu_usage_cores,MapBatches(gpu_infer),0.3
+ray_data_cpu_usage_cores,MapBatches(decode_resize),32
+ray_data_pool_utilization,MapBatches(gpu_infer),0.25
