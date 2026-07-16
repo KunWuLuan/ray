@@ -1,7 +1,9 @@
 # Ray Data Tuning Playbook
 
-The Ray Data Tuning Advisor reads this file on every run. Sections are filled in
-across implementation tasks.
+The Ray Data Tuning Advisor reads this file on every run. It is the diagnostic
+knowledge base: parsing anchor map (Section 0), derived indicators (Section 1),
+symptom taxonomy S1–S12 (Section 2), recommendation catalog (Section 3), KubeRay
+translation table (Section 4), and signal-reference appendix (Section 5).
 
 ## Section 0 — Parsing anchor map
 
@@ -33,7 +35,7 @@ absent, treat that signal as unavailable — do not guess.
   - `is more than 4x the number of available CPU slots` — read over-parallelism.
   - `will not allow it to scale up` — actor pool cannot scale.
   - `exceeds DataContext.get_current().target_shuffle_max_block_size` — large block.
-  - `hash-shuffle aggregators are ready after` / `Insufficient CPU resources in cluster for hash shuffle` / `Insufficient memory resources in cluster for hash shuffle` — shuffle health.
+  - `hash-shuffle aggregators are ready after` / `Insufficient CPU resources in cluster for hash shuffle` / `Insufficient memory resources in cluster for hash shuffle` / `exceeds the largest node's memory` — shuffle health (last = per-aggregator memory clamp/spill).
   - `estimated to use at least` + `driver memory` — driver memory pressure.
   - `Timed out` + `waiting for metadata from operator` — metadata fetch timeout.
 
@@ -205,7 +207,8 @@ to cite**. A symptom fires only when its confirming signals are present.
 ### S9. Shuffle / join memory pressure
 - **Confirming signals:** warnings `Insufficient memory resources in cluster for
   hash shuffle` / `Insufficient CPU resources in cluster for hash shuffle` /
-  `hash-shuffle aggregators are ready after` / per-aggregator memory clamp.
+  `hash-shuffle aggregators are ready after` / `exceeds the largest node's memory`
+  (per-aggregator memory clamp/spill).
 - **Root cause:** hash-shuffle/join aggregators need more memory/CPU than the
   cluster has, so they start slowly or spill.
 - **Ranked remediations:**

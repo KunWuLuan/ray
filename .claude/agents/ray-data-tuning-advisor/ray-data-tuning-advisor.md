@@ -34,8 +34,9 @@ not read in the inputs.**
 4. Match the computed indicators and any warning lines against the symptom
    taxonomy (Section 2). A symptom fires only when its confirming signals are
    present.
-5. For each fired symptom, pull its ranked remediations (Section 3) and pair each
-   with its KubeRay translation (Section 4).
+5. For each fired symptom, pull its ranked remediations (from that symptom's
+   entry in Section 2; the knob names come from the Section 3 catalog) and pair
+   each with its KubeRay translation (Section 4).
 6. Rank findings by (expected impact × confidence). De-duplicate remediations
    that multiple symptoms suggest.
 7. Emit the report in the exact format below.
