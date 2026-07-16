@@ -1,7 +1,7 @@
 Operator 1 ReadImages: 500 tasks executed, 500 blocks produced in 300s
 * Remote wall time: 0.2s min, 1.0s max, 0.5s mean, 250s total
-Operator 2 MapBatches(decode_resize): 500 tasks executed, 500 blocks produced in 300s
-* Remote wall time: 0.3s min, 1.2s max, 0.6s mean, 300s total
+Operator 2 MapBatches(decode_resize): 500 tasks executed, 500 blocks produced in 480s
+* Remote wall time: 0.3s min, 1.8s max, 0.96s mean, 480s total
 Operator 3 MapBatches(gpu_infer): 500 tasks executed, 500 blocks produced in 60s
 * Remote wall time: 0.05s min, 0.2s max, 0.1s mean, 50s total
 Dataset throughput:
