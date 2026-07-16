@@ -210,6 +210,7 @@ Draw remediations from these four levers, always by exact knob name:
   `target_shuffle_max_block_size`, `override_num_blocks`,
   `read_op_min_num_blocks`, `execution_options.resource_limits`,
   `execution_options.exclude_resources`, `actor_pool_util_upscaling_threshold`,
+  `max_tasks_in_flight_per_actor`,
   `shuffle_strategy`, `max_hash_shuffle_aggregators`, issue-detector configs.
 - **Per-op call args**: `concurrency=`, `compute=` (ActorPoolStrategy),
   `num_cpus=`, `num_gpus=`, `memory=`, `batch_size=`,
