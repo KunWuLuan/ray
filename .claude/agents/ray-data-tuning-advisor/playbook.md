@@ -2,7 +2,7 @@
 
 The Ray Data Tuning Advisor reads this file on every run. It is the diagnostic
 knowledge base: parsing anchor map (Section 0), derived indicators (Section 1),
-symptom taxonomy S1–S12 (Section 2), recommendation catalog (Section 3), KubeRay
+symptom taxonomy S1–S13 (Section 2), recommendation catalog (Section 3), KubeRay
 translation table (Section 4), and signal-reference appendix (Section 5).
 
 ## Section 0 — Parsing anchor map
@@ -50,6 +50,34 @@ absent, treat that signal as unavailable — do not guess.
   `ray_data_*_per_node`,
   `ray_data_cluster_{cpu,gpu,mem,object_store_memory}_utilization`.
 
+### In a Ray timeline trace (Chrome-tracing JSON)
+Produced by `ray timeline` / `ray.timeline(filename=...)`. It is an array of
+trace events (or `{"traceEvents": [...]}`); each event has `ph` (phase: `X` =
+complete event with a `dur`; `M` = metadata), `ts`/`dur` (microseconds),
+`pid`/`tid` (a `pid`/`tid` pair is one worker/actor track, labeled by `M`
+`process_name`/`thread_name` events with the op/actor/node name), `name`, `cat`.
+**Do NOT Read the whole file — it can be hundreds of MB.** Aggregate with Bash
+(python3/jq): per track compute `busy = Σdur`, `span = max(ts+dur) − min(ts)`,
+`busy_fraction = busy/span`, and the gaps between consecutive events. Example:
+
+```bash
+python3 - "$TRACE" <<'PY'
+import json,sys,collections
+ev=json.load(open(sys.argv[1])); ev=ev.get('traceEvents',ev) if isinstance(ev,dict) else ev
+names={}; tr=collections.defaultdict(list)
+for e in ev:
+    if e.get('ph')=='M' and e.get('name') in ('process_name','thread_name'):
+        names[(e['pid'],e.get('tid'))]=e.get('args',{}).get('name')
+    elif e.get('ph')=='X' and 'dur' in e:
+        tr[(e['pid'],e['tid'])].append((e['ts'],e['dur']))
+for k,evs in tr.items():
+    evs.sort(); busy=sum(d for _,d in evs); span=(evs[-1][0]+evs[-1][1])-evs[0][0]
+    gaps=[evs[i+1][0]-(evs[i][0]+evs[i][1]) for i in range(len(evs)-1)]
+    lbl=names.get(k) or names.get((k[0],None)) or k
+    print(f"{lbl}: busy_frac={busy/span:.2f} n={len(evs)} mean_gap_us={ (sum(gaps)/len(gaps)) if gaps else 0:.0f}")
+PY
+```
+
 ## Section 1 — Derived indicators
 
 Compute each from whatever inputs exist. Show the value and the inputs used.
@@ -66,6 +94,9 @@ Compute each from whatever inputs exist. Show the value and the inputs used.
 | `read_parallelism_ratio` | read blocks ÷ cluster CPU slots | >4 triggers the over-parallelism warning |
 | `tasks_per_node_skew` | `Tasks per node` max ÷ min (or `*_per_node` metrics) | >>1 indicates imbalance/locality issues |
 | `time_to_first_batch` / `iter_blocked` | `ray_data_iter_time_to_first_batch_seconds` / `iter_total_blocked_seconds` | large = consumer (trainer) starvation |
+| `actor_busy_fraction` | (timeline) per-actor `Σdur ÷ track wall-span` | GPU actor <~0.5 = idle between calls → overhead/upstream-bound, NOT compute-bound |
+| `inter_task_gap` | (timeline) mean/median gap between consecutive events on a track | large gaps = actor starved between calls (input fetch / CPU preprocessing / recompile / warmup) |
+| `op_concurrency_over_time` | (timeline) max simultaneous task spans for an op vs its configured `concurrency` | far below configured = parallelism not realized (backpressure / placement) |
 
 Report indicators you could not compute as "unavailable (missing <input>)".
 
@@ -112,10 +143,18 @@ to cite**. A symptom fires only when its confirming signals are present.
      enough GPU slots.
 - **Evidence to cite:** GPU usage/pool-utilization value and the upstream CPU op's
   wall-time share.
+- **Disambiguate before recommending more GPUs:** if a timeline trace exists,
+  check `actor_busy_fraction` of the GPU op. If it is LOW (device idle between
+  calls) this is **S13 (overhead-bound)** — add concurrency/CPU/batch, NOT GPUs.
+  S2 proper is when the GPU op *is* busy but its upstream can't feed it enough.
 
 ### S3. One operator dominates wall time
 - **Confirming signals:** a single op's `per_op_walltime_share` ≫ others (e.g.
   > 60%).
+- **Before recommending more resources:** confirm the dominating op is
+  *compute-bound* — if a timeline trace shows its `actor_busy_fraction` is low
+  (device/worker idle between calls), it is overhead-bound; treat as **S13**
+  (add concurrency/CPU/batch) rather than throwing more CPUs/GPUs at it.
 - **Root cause:** that operator is the pipeline bottleneck; everything else waits
   on it.
 - **Ranked remediations:**
@@ -259,6 +298,38 @@ to cite**. A symptom fires only when its confirming signals are present.
      request.
 - **Evidence to cite:** the driver-memory estimate line.
 
+### S13. GPU/actor stage is latency/overhead-bound (not compute-bound)
+- **Confirming signals:** (timeline) a GPU/actor op is the wall-time long pole
+  yet its `actor_busy_fraction` is low (<~0.5) and/or `inter_task_gap` is large;
+  external GPU utilization (nvidia-smi/DCGM) is low despite `2/2 GPU` scheduled;
+  `pool_utilization` moderate but measured throughput far below the model's known
+  ceiling. Common with small/cheap models, tiny `batch_size`, per-call CPU
+  preprocessing (e.g. tokenization) inside the UDF, or per-call `torch.compile`
+  recompilation.
+- **Root cause:** the device sits idle between calls — per-call overhead (input
+  fetch, CPU preprocessing, small batches, recompilation) dominates, so raw GPU
+  compute is NOT the limiter. Reducing actor count makes this WORSE (less
+  latency-hiding and less preprocessing parallelism).
+- **Ranked remediations:**
+  1. Raise in-flight concurrency to hide per-call latency: more actors
+     (`concurrency=`) and/or higher `max_concurrency` per actor; keep GPUs
+     fractionally shared. → KubeRay: no new GPUs needed — same hardware.
+  2. Give each actor enough CPU for its preprocessing: set `num_cpus=` on the GPU
+     op so tokenization/decode isn't starved. → KubeRay: ensure pod CPU ≥
+     actors × per-actor `num_cpus`.
+  3. Amortize per-call overhead: raise `batch_size=` AND any library-internal
+     batch (e.g. `SentenceTransformer.encode(batch_size=...)`, whose default
+     caps the real device batch) so each call does more work.
+  4. Move CPU preprocessing off the GPU actor into its own upstream CPU stage
+     (tokenize/decode in a `map`/`map_batches`; feed only tensors to the GPU op).
+  5. Avoid per-call recompilation: fixed shapes / `dynamic=True`, or drop
+     `torch.compile` for tiny models where its warmup never amortizes.
+- **Caution:** do NOT add GPUs while the device is idle — more GPUs cannot raise
+  the throughput of an overhead-bound stage. → KubeRay: hold the GPU
+  worker-group size; scale CPU / concurrency instead.
+- **Evidence to cite:** the GPU op's `actor_busy_fraction`, `inter_task_gap`, and
+  measured throughput vs the model's expected ceiling.
+
 ## Section 3 — Recommendation catalog (levers)
 
 Draw remediations from these four levers, always by exact knob name:
@@ -273,8 +344,13 @@ Draw remediations from these four levers, always by exact knob name:
   `max_hash_shuffle_aggregators`, issue-detector configs.
 - **Per-op call args**: `concurrency=`, `compute=` (ActorPoolStrategy),
   `num_cpus=`, `num_gpus=`, `memory=`, `batch_size=`,
+  library-internal batch size (e.g. `encode(batch_size=)`),
   `prefetch_batches` (iterator prefetch depth), `max_concurrency` (actor),
   operator fusion, `.materialize()` before shuffle.
+- **Pipeline shape**: split per-call CPU preprocessing (tokenize/decode) into its
+  own upstream `map`/`map_batches` stage so GPU actors do only GPU work; avoid
+  per-call `torch.compile` recompilation (fixed shapes / `dynamic=True`, or drop
+  compile for tiny models).
 - **Pod size**: worker-group CPU/memory/GPU requests, `--num-cpus`,
   `object_store_memory`, head-node memory.
 - **Autoscaling**: RayCluster autoscaler `minReplicas`/`maxReplicas` per worker
@@ -293,6 +369,7 @@ Every recommendation is emitted as `Ray knob → KubeRay translation`.
 | Actor pool min/max size | Align worker-group `minReplicas`/`maxReplicas` so the pool's max actors fit; GPU actors need one GPU slot each |
 | Reduce driver memory pressure | Increase head-group pod `resources.requests.memory` |
 | `exclude_resources` for non-Data workloads | Reflect co-located non-Data pods; or isolate Ray Data onto a dedicated worker group |
+| Overhead-bound GPU stage (S13) | Do NOT add GPUs — keep the GPU worker group as-is. Raise actor `concurrency`/`num_cpus` within existing pods; enlarge the CPU worker group if preprocessing is split into its own stage |
 
 Autoscaling note: Ray Data actor-pool scaling operates within the pods the
 KubeRay autoscaler provides. If the actor pool wants more actors than the
@@ -305,7 +382,7 @@ Two purposes: (a) a lookup of every known signal, and (b) a **catch-all rule** s
 nothing is silently dropped.
 
 **Catch-all rule:** if the inputs contain a `ray_data_*` metric, a `WARNING`/
-`ERROR` line, or a detector message that does NOT match any symptom S1–S12,
+`ERROR` line, or a detector message that does NOT match any symptom S1–S13,
 surface it under "What I couldn't assess" as an *unclassified signal* with the
 verbatim line, and suggest what it might indicate. Never ignore a warning.
 
@@ -328,6 +405,14 @@ verbatim line, and suggest what it might indicate. Never ignore a warning.
 - Per-node: `*_per_node`. Cluster: `cluster_{cpu,gpu,mem,object_store_memory}_utilization`.
 - State/metadata: `dataset_state`, `operator_state`, `operator_queued_blocks`,
   `*_estimated_total_{blocks,rows}`.
+
+### Ray timeline trace (Chrome-tracing JSON)
+Event fields: `ph` (`X` complete / `M` metadata), `ts`, `dur`, `pid`, `tid`,
+`name`, `cat`; a `pid`/`tid` pair is one worker/actor track, named via `M`
+`process_name`/`thread_name`. Derived indicators: `actor_busy_fraction`,
+`inter_task_gap`, `op_concurrency_over_time` (Section 1). Low `actor_busy_fraction`
++ large `inter_task_gap` on the wall-time long-pole GPU op → **S13**
+(overhead-bound); high busy-fraction + full device → genuine compute-bound (S2/S3).
 
 ### Known warning strings → symptom
 | Warning substring | Symptom |

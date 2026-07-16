@@ -1,0 +1,23 @@
+{"traceEvents":[
+{"ph":"M","pid":200,"tid":1,"name":"process_name","args":{"name":"FlatMap(extract_text_from_pdf) (node 10.0.0.2)"}},
+{"ph":"M","pid":100,"tid":1,"name":"process_name","args":{"name":"MapBatches(Embedder) (node 10.0.0.2)"}},
+{"ph":"M","pid":100,"tid":1,"name":"thread_name","args":{"name":"Embedder.actor A1"}},
+{"ph":"M","pid":100,"tid":2,"name":"thread_name","args":{"name":"Embedder.actor A2"}},
+
+{"ph":"X","pid":200,"tid":1,"ts":0,"dur":700000,"name":"extract_text_from_pdf","cat":"task"},
+{"ph":"X","pid":200,"tid":1,"ts":700000,"dur":700000,"name":"extract_text_from_pdf","cat":"task"},
+
+{"ph":"X","pid":100,"tid":1,"ts":0,"dur":60000,"name":"Embedder.__call__","cat":"task"},
+{"ph":"X","pid":100,"tid":1,"ts":400000,"dur":60000,"name":"Embedder.__call__","cat":"task"},
+{"ph":"X","pid":100,"tid":1,"ts":800000,"dur":60000,"name":"Embedder.__call__","cat":"task"},
+{"ph":"X","pid":100,"tid":1,"ts":1200000,"dur":60000,"name":"Embedder.__call__","cat":"task"},
+{"ph":"X","pid":100,"tid":1,"ts":1600000,"dur":60000,"name":"Embedder.__call__","cat":"task"},
+{"ph":"X","pid":100,"tid":1,"ts":2000000,"dur":60000,"name":"Embedder.__call__","cat":"task"},
+
+{"ph":"X","pid":100,"tid":2,"ts":200000,"dur":60000,"name":"Embedder.__call__","cat":"task"},
+{"ph":"X","pid":100,"tid":2,"ts":600000,"dur":60000,"name":"Embedder.__call__","cat":"task"},
+{"ph":"X","pid":100,"tid":2,"ts":1000000,"dur":60000,"name":"Embedder.__call__","cat":"task"},
+{"ph":"X","pid":100,"tid":2,"ts":1400000,"dur":60000,"name":"Embedder.__call__","cat":"task"},
+{"ph":"X","pid":100,"tid":2,"ts":1800000,"dur":60000,"name":"Embedder.__call__","cat":"task"},
+{"ph":"X","pid":100,"tid":2,"ts":2200000,"dur":60000,"name":"Embedder.__call__","cat":"task"}
+]}
