@@ -44,7 +44,8 @@ absent, treat that signal as unavailable — do not guess.
   `ray_data_num_pending_actors`, `ray_data_num_idle_actors`,
   `ray_data_task_submission_backpressure_time`,
   `ray_data_task_output_backpressure_time`,
-  `ray_data_object_store_memory_budget`, `ray_data_*_per_node`,
+  `ray_data_memory_budget`, `ray_data_object_store_memory_budget`,
+  `ray_data_*_per_node`,
   `ray_data_cluster_{cpu,gpu,mem,object_store_memory}_utilization`.
 
 ## Section 1 — Derived indicators
@@ -168,8 +169,9 @@ Draw remediations from these four levers, always by exact knob name:
   `execution_options.exclude_resources`, `actor_pool_util_upscaling_threshold`,
   `shuffle_strategy`, `max_hash_shuffle_aggregators`, issue-detector configs.
 - **Per-op call args**: `concurrency=`, `compute=` (ActorPoolStrategy),
-  `num_cpus=`, `num_gpus=`, `memory=`, `batch_size=`, operator fusion,
-  `.materialize()` before shuffle.
+  `num_cpus=`, `num_gpus=`, `memory=`, `batch_size=`,
+  `prefetch_batches` (iterator prefetch depth), `max_concurrency` (actor),
+  operator fusion, `.materialize()` before shuffle.
 - **Pod size**: worker-group CPU/memory/GPU requests, `--num-cpus`,
   `object_store_memory`, head-node memory.
 - **Autoscaling**: RayCluster autoscaler `minReplicas`/`maxReplicas` per worker
