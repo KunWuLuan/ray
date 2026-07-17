@@ -34,33 +34,29 @@ from typing import Any, Optional
 class InProcessVLLMEngine:
     """vLLM ``AsyncLLM`` engine that honours the configured executor backend."""
 
-    def __init__(self, llm_config: Any) -> None:
+    def __init__(self, llm_config: Any, weight_source: str = "disk") -> None:
         self._cfg = llm_config
         self._model_id = llm_config.model_loading_config.model_id
         self._source = llm_config.model_loading_config.model_source
         self._ek = dict(llm_config.engine_kwargs or {})
+        self._weight_source = weight_source
         self._eng = None
         self._tok = None
         self._rid = 0
 
-    async def start(self) -> None:
-        from vllm import AsyncEngineArgs
-        from vllm.v1.engine.async_llm import AsyncLLM
-        from transformers import AutoTokenizer
+    def _build_engine_kwargs(self) -> dict:
+        """Build the ``AsyncEngineArgs`` kwargs (pure; no vLLM import).
 
-        from fuse_llm.fused_ray_executor import (
-            FusedRayExecutor,
-            get_or_create_shared_pg,
-        )
+        Forward ALL engine_kwargs to vLLM (they are AsyncEngineArgs fields), so
+        throughput knobs such as ``max_num_batched_tokens`` and
+        ``enable_chunked_prefill`` reach the engine instead of being dropped.
+        Fill defaults only for keys the caller omitted, and force the ones this
+        backend must own. When ``weight_source == "rdt"`` merge the RDT reload
+        worker extension so a level-2 wake can pull weights over NIXL.
+        """
+        from fuse_llm.fused_ray_executor import FusedRayExecutor
 
-        src = self._source  # a local dir or an HF repo id (offline cache honoured)
         tp = self._ek.get("tensor_parallel_size", 1)
-
-        # Forward ALL engine_kwargs to vLLM (they are AsyncEngineArgs fields),
-        # so throughput knobs such as ``max_num_batched_tokens`` and
-        # ``enable_chunked_prefill`` reach the engine instead of being dropped.
-        # Fill defaults only for keys the caller omitted, and force the ones
-        # this backend must own.
         ek = dict(self._ek)
         ek.setdefault("enforce_eager", True)
         ek.setdefault("gpu_memory_utilization", 0.3)
@@ -69,6 +65,22 @@ class InProcessVLLMEngine:
         ek.setdefault("enable_sleep_mode", True)
         ek["tensor_parallel_size"] = tp
         ek["distributed_executor_backend"] = FusedRayExecutor
+        if self._weight_source == "rdt":
+            ek["worker_extension_cls"] = (
+                "fuse_llm.rdt_worker.RDTReloadWorkerExtension"
+            )
+        return ek
+
+    async def start(self) -> None:
+        from vllm import AsyncEngineArgs
+        from vllm.v1.engine.async_llm import AsyncLLM
+        from transformers import AutoTokenizer
+
+        from fuse_llm.fused_ray_executor import get_or_create_shared_pg
+
+        src = self._source  # a local dir or an HF repo id (offline cache honoured)
+        tp = self._ek.get("tensor_parallel_size", 1)
+        ek = self._build_engine_kwargs()
         args = AsyncEngineArgs(model=src, **ek)
         # Inject the deployment-owned shared placement group so all engines
         # co-reside on the same GPUs (fractional num_gpus). Requires running
