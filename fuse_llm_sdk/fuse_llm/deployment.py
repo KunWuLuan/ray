@@ -175,6 +175,8 @@ class FuseModelDeployment:
         llm_configs: List[LLMConfig],
         default_models: Optional[List[str]] = None,
         drain_timeout_s: float = 30.0,
+        weight_source: str = "disk",
+        weight_cache: Optional[Any] = None,
     ) -> None:
         self._llm_configs: Dict[str, LLMConfig] = {
             c.model_loading_config.model_id: c for c in llm_configs
@@ -234,6 +236,17 @@ class FuseModelDeployment:
         self._drain_timeout_s = drain_timeout_s
 
         self._initialized = False
+
+        if weight_source not in ("disk", "rdt"):
+            raise ValueError(
+                f"weight_source must be 'disk' or 'rdt', got {weight_source!r}"
+            )
+        if weight_source == "rdt" and weight_cache is None:
+            raise ValueError(
+                "weight_source='rdt' requires a weight_cache handle"
+            )
+        self._weight_source = weight_source
+        self._weight_cache = weight_cache
 
     # ------------------------------------------------------------------
     # Lifecycle
@@ -523,13 +536,17 @@ class FuseModelDeployment:
         level = self._sleep_levels.get(model_id)
 
         if level == 2:
+            rpc_args = ()
+            if self._weight_source == "rdt":
+                rpc_args = (self._weight_cache, model_id)
             logger.info(
                 "Waking up '%s' from level-2 sleep "
-                "(3-step: weights -> reload -> kv_cache) ...",
+                "(3-step: weights -> reload[%s] -> kv_cache) ...",
                 model_id,
+                self._weight_source,
             )
             await engine.wakeup(tags=["weights"])
-            await engine.collective_rpc(method="reload_weights")
+            await engine.collective_rpc(method="reload_weights", args=rpc_args)
             await engine.wakeup(tags=["kv_cache"])
         else:
             logger.info(
