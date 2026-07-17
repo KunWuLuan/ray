@@ -52,31 +52,60 @@ absent, treat that signal as unavailable — do not guess.
 
 ### In a Ray timeline trace (Chrome-tracing JSON)
 Produced by `ray timeline` / `ray.timeline(filename=...)`. It is an array of
-trace events (or `{"traceEvents": [...]}`); each event has `ph` (phase: `X` =
-complete event with a `dur`; `M` = metadata), `ts`/`dur` (microseconds),
-`pid`/`tid` (a `pid`/`tid` pair is one worker/actor track, labeled by `M`
-`process_name`/`thread_name` events with the op/actor/node name), `name`, `cat`.
-**Do NOT Read the whole file — it can be hundreds of MB.** Aggregate with Bash
-(python3/jq): per track compute `busy = Σdur`, `span = max(ts+dur) − min(ts)`,
-`busy_fraction = busy/span`, and the gaps between consecutive events. Example:
+trace events (or `{"traceEvents": [...]}`); each event has `ph` (`X` = complete
+event with a `dur`; `M` = metadata), `ts`/`dur` (microseconds), `pid`/`tid`
+(pid≈node, tid≈worker — NOT per-operator), `name`, `cat`, and `args`.
+
+**Real Ray schema — read this before aggregating:**
+- Operator/actor identity is in `args`, not the track: `args.actor_id`
+  (non-null for ActorPool ops like a GPU `MapBatches`), `args.func_or_class_name`.
+- The op name is in `cat`: `task::<OpName>...` (e.g.
+  `task::MapWorker(MapBatches(Embedder)).submit`, `task::Download(...)`), while
+  the real work phase is `cat == "task:execute"`; other phases are
+  `task:deserialize_arguments`, `task:store_outputs`, `submit_task`.
+- **Spans OVERLAP.** Under `max_concurrency>1` and nested wrapper spans
+  (`...submit` wraps `task:execute`), several events run at once, so
+  `Σdur` FAR exceeds wall time (you will see "busy_frac" >1 if you sum). **You
+  MUST use interval-union**, not `Σdur/span`, and count only `task:execute`.
+
+**Do NOT Read the whole file — it can be hundreds of MB.** Aggregate with Bash:
 
 ```bash
 python3 - "$TRACE" <<'PY'
 import json,sys,collections
 ev=json.load(open(sys.argv[1])); ev=ev.get('traceEvents',ev) if isinstance(ev,dict) else ev
-names={}; tr=collections.defaultdict(list)
-for e in ev:
-    if e.get('ph')=='M' and e.get('name') in ('process_name','thread_name'):
-        names[(e['pid'],e.get('tid'))]=e.get('args',{}).get('name')
-    elif e.get('ph')=='X' and 'dur' in e:
-        tr[(e['pid'],e['tid'])].append((e['ts'],e['dur']))
-for k,evs in tr.items():
-    evs.sort(); busy=sum(d for _,d in evs); span=(evs[-1][0]+evs[-1][1])-evs[0][0]
-    gaps=[evs[i+1][0]-(evs[i][0]+evs[i][1]) for i in range(len(evs)-1)]
-    lbl=names.get(k) or names.get((k[0],None)) or k
-    print(f"{lbl}: busy_frac={busy/span:.2f} n={len(evs)} mean_gap_us={ (sum(gaps)/len(gaps)) if gaps else 0:.0f}")
+X=[e for e in ev if e.get('ph')=='X' and 'dur' in e]
+def union(iv):                       # interval-union busy time (handles overlap)
+    iv=sorted(iv); tot=0; cs=ce=None
+    for s,d in iv:
+        e=s+d
+        if cs is None: cs,ce=s,e
+        elif s<=ce: ce=max(ce,e)
+        else: tot+=ce-cs; cs,ce=s,e
+    if cs is not None: tot+=ce-cs
+    return tot
+act=collections.defaultdict(list)    # per-actor execute spans → true busy fraction
+for e in X:
+    a=e.get('args',{}).get('actor_id')
+    if a and e.get('cat')=='task:execute': act[a].append((e['ts'],e['dur']))
+for a,iv in act.items():
+    if len(iv)<10: continue          # skip tiny warmup/aggregator actors
+    u=union(iv); s=min(t for t,_ in iv); z=max(t+d for t,d in iv)
+    print(f"actor {a[:12]}: union_busy_frac={u/(z-s):.2f} active={(z-s)/1e6:.0f}s n={len(iv)}")
+op=collections.defaultdict(list)     # per-operator active window → find the long pole
+for e in X:
+    c=e.get('cat','')
+    if c.startswith('task::'): op[c.split('task::',1)[1].split('.')[0]].append((e['ts'],e['ts']+e['dur']))
+t0=min(e['ts'] for e in X)
+for name,iv in sorted(op.items(), key=lambda kv:min(a for a,_ in kv[1])):
+    print(f"op {name[:40]:40s} start={(min(a for a,_ in iv)-t0)/1e6:6.1f}s end={(max(b for _,b in iv)-t0)/1e6:6.1f}s")
 PY
 ```
+
+Interpretation: an actor's `union_busy_frac` near 1.0 = saturated (compute-bound,
+S2/S3); low (<~0.5) with a long active window = idle between calls
+(overhead-bound, **S13**). The long-pole op is the one whose active window ends
+last.
 
 ## Section 1 — Derived indicators
 
@@ -94,8 +123,8 @@ Compute each from whatever inputs exist. Show the value and the inputs used.
 | `read_parallelism_ratio` | read blocks ÷ cluster CPU slots | >4 triggers the over-parallelism warning |
 | `tasks_per_node_skew` | `Tasks per node` max ÷ min (or `*_per_node` metrics) | >>1 indicates imbalance/locality issues |
 | `time_to_first_batch` / `iter_blocked` | `ray_data_iter_time_to_first_batch_seconds` / `iter_total_blocked_seconds` | large = consumer (trainer) starvation |
-| `actor_busy_fraction` | (timeline) per-actor `Σdur ÷ track wall-span` | GPU actor <~0.5 = idle between calls → overhead/upstream-bound, NOT compute-bound |
-| `inter_task_gap` | (timeline) mean/median gap between consecutive events on a track | large gaps = actor starved between calls (input fetch / CPU preprocessing / recompile / warmup) |
+| `actor_busy_fraction` | (timeline) per-actor **interval-union** of `task:execute` spans ÷ active window (NOT Σdur — spans overlap under concurrency) | ~1.0 = saturated (compute-bound, S2/S3); <~0.5 = idle between calls → overhead-bound (S13) |
+| `inter_task_gap` | (timeline) gaps between an actor's `task:execute` spans | large gaps = actor starved between calls (input fetch / CPU preprocessing / recompile / warmup) |
 | `op_concurrency_over_time` | (timeline) max simultaneous task spans for an op vs its configured `concurrency` | far below configured = parallelism not realized (backpressure / placement) |
 
 Report indicators you could not compute as "unavailable (missing <input>)".
