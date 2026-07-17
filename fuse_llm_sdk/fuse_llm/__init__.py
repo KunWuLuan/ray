@@ -24,6 +24,7 @@ from fuse_llm.deploy import (
 from fuse_llm.client import switch_combination
 from fuse_llm.engines import InProcessVLLMEngine
 from fuse_llm.fused_ray_executor import FusedRayExecutor
+from fuse_llm.weight_cache import WeightCacheServer
 
 __all__ = [
     "FuseModelDeployment",
@@ -36,6 +37,7 @@ __all__ = [
     "set_vllm_engine_class",
     "InProcessVLLMEngine",
     "FusedRayExecutor",
+    "WeightCacheServer",
 ]
 
 __version__ = "0.1.0"

@@ -112,12 +112,16 @@ class FuseServeDeployment(FuseModelDeployment):
         llm_configs: List[LLMConfig],
         default_models: Optional[List[str]] = None,
         drain_timeout_s: float = 30.0,
+        weight_source: str = "disk",
+        weight_cache: Optional[Any] = None,
     ) -> None:
         FuseModelDeployment.__init__(
             self,
             llm_configs=llm_configs,
             default_models=default_models,
             drain_timeout_s=drain_timeout_s,
+            weight_source=weight_source,
+            weight_cache=weight_cache,
         )
         await self._initialize()
 
@@ -143,6 +147,9 @@ def deploy(
     min_interval_s: float = 60.0,
     queue_threshold: int = 10,
     default_sleep_level: int = 1,
+    weight_source: str = "disk",
+    model_sources: Optional[dict] = None,
+    weight_cache_options: Optional[dict] = None,
 ) -> Tuple:
     """Deploy the FuseModelDeployment (multi-model GPU time-sharing).
 
@@ -182,11 +189,27 @@ def deploy(
     if not ray.is_initialized():
         ray.init()
 
+    # 0. Optionally stand up the RDT weight cache. When weight_source='rdt',
+    #    a WeightCacheServer actor holds each model's weights in host RAM and
+    #    serves them over NIXL so level-2 wakes reload weights without disk.
+    weight_cache = None
+    if weight_source == "rdt":
+        from fuse_llm.weight_cache import WeightCacheServer
+
+        if not model_sources:
+            raise ValueError(
+                "weight_source='rdt' requires model_sources={model_id: local_dir}"
+            )
+        opts = weight_cache_options or {}
+        weight_cache = WeightCacheServer.options(**opts).remote(model_sources)
+
     # 1. Deploy the fuse application
     app = FuseServeDeployment.bind(
         llm_configs=model_configs,
         default_models=default_models,
         drain_timeout_s=drain_timeout_s,
+        weight_source=weight_source,
+        weight_cache=weight_cache,
     )
     serve.run(app, name=app_name, route_prefix=route_prefix, blocking=False)
     logger.info("FuseServeDeployment deployed as '%s'", app_name)

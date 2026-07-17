@@ -284,8 +284,13 @@ class FuseModelDeployment:
             llm_config = self._llm_configs[model_id]
             logger.info("Initialising engine for model '%s' ...", model_id)
 
-            # 1. Create the engine
-            engine = engine_cls(llm_config)
+            # 1. Create the engine (pass weight_source so RDT engines register
+            #    the worker extension; falls back gracefully for engines whose
+            #    __init__ does not accept it, e.g. simple test fakes).
+            try:
+                engine = engine_cls(llm_config, weight_source=self._weight_source)
+            except TypeError:
+                engine = engine_cls(llm_config)
 
             # 2. Start (allocates GPU memory, loads model weights)
             await engine.start()

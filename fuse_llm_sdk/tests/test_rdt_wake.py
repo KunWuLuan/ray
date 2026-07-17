@@ -103,3 +103,21 @@ async def test_disk_wake_passes_no_args():
 async def test_rdt_requires_cache():
     with pytest.raises(ValueError, match="requires a weight_cache"):
         FuseModelDeployment([_cfg("a")], weight_source="rdt")
+
+
+@pytest.mark.asyncio
+async def test_engine_constructed_with_weight_source(monkeypatch):
+    seen = {}
+
+    class RecordingEngine(FakeEngine):
+        def __init__(self, llm_config, weight_source="disk"):
+            super().__init__(llm_config)
+            seen[self.model_id] = weight_source
+
+    set_vllm_engine_class(RecordingEngine)
+    dep = FuseModelDeployment(
+        [_cfg("a")], default_models=["a"],
+        weight_source="rdt", weight_cache=object(),
+    )
+    await dep._initialize()
+    assert seen["a"] == "rdt"
