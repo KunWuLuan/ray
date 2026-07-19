@@ -45,7 +45,10 @@ class InProcessVLLMEngine:
         self._rid = 0
 
     def _build_engine_kwargs(self) -> dict:
-        """Build the ``AsyncEngineArgs`` kwargs (pure; no vLLM import).
+        """Build the ``AsyncEngineArgs`` kwargs.
+
+        Performs no DIRECT vLLM import; it imports ``FusedRayExecutor`` (which
+        transitively imports vLLM). The method itself stays GPU-free-importable.
 
         Forward ALL engine_kwargs to vLLM (they are AsyncEngineArgs fields), so
         throughput knobs such as ``max_num_batched_tokens`` and

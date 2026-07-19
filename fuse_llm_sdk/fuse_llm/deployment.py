@@ -120,6 +120,7 @@ class ModelStats:
       Wake-up requires three steps:
       1. ``wakeup(tags=["weights"])``  — reallocate weight memory
       2. ``collective_rpc("reload_weights")`` — load weights from disk
+         or the RDT weight cache (per ``weight_source``)
       3. ``wakeup(tags=["kv_cache"])``  — reallocate KV cache memory
     """
 
@@ -535,6 +536,7 @@ class FuseModelDeployment:
         - **Level 2** (weights discarded): three-step sequence:
           1. ``wakeup(tags=["weights"])`` — reallocate weight GPU memory
           2. ``collective_rpc("reload_weights")`` — load weights from disk
+             or the RDT weight cache (per ``weight_source``)
           3. ``wakeup(tags=["kv_cache"])`` — reallocate KV cache memory
         """
         engine = self._engines[model_id]
@@ -551,7 +553,24 @@ class FuseModelDeployment:
                 self._weight_source,
             )
             await engine.wakeup(tags=["weights"])
-            await engine.collective_rpc(method="reload_weights", args=rpc_args)
+            results = await engine.collective_rpc(
+                method="reload_weights", args=rpc_args
+            )
+            # Readiness gate: only mark a model awake after reload_weights
+            # reports full coverage.  Be lenient — the worker returns rich dicts
+            # only in the RDT path; test/legacy engines may return None, an
+            # empty list, or dicts without an "ok" key.  Raise ONLY on an
+            # explicit failure marker ({"ok": False}).
+            failed = [
+                r
+                for r in (results or [])
+                if isinstance(r, dict) and r.get("ok") is False
+            ]
+            if failed:
+                raise RuntimeError(
+                    f"reload_weights reported failure for '{model_id}' on "
+                    f"{len(failed)} worker(s): {failed}"
+                )
             await engine.wakeup(tags=["kv_cache"])
         else:
             logger.info(

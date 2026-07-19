@@ -57,7 +57,18 @@ class WeightCacheServer:
             names = sorted(sd.keys())
             # Pin + register each tensor with NIXL so the RDMA region persists.
             for name in names:
-                t = sd[name].pin_memory()
+                # pin_memory() needs a CUDA runtime; the cache is designed to
+                # run on a non-inference (possibly GPU-less) node, so fall back
+                # to the unpinned CPU tensor rather than crashing __init__.
+                try:
+                    t = sd[name].pin_memory()
+                except (RuntimeError, AssertionError) as e:
+                    logger.warning(
+                        "pin_memory unavailable for %s (%s); using unpinned tensor",
+                        name,
+                        e,
+                    )
+                    t = sd[name]
                 sd[name] = t
                 try:
                     register_nixl_memory(t)

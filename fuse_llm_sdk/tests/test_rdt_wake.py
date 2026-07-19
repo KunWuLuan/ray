@@ -15,6 +15,9 @@ from fuse_llm.deployment import FuseModelDeployment
 class FakeEngine:
     """Engine fake that records collective_rpc invocations."""
 
+    # Override in subclasses/instances to control the reload_weights result.
+    reload_result = [{"ok": True}]
+
     def __init__(self, llm_config):
         self.model_id = llm_config.model_loading_config.model_id
         self._sleeping = False
@@ -45,7 +48,7 @@ class FakeEngine:
         self.rpc_calls.append((method, args))
         if self.rpc_should_raise:
             raise RuntimeError("simulated transport failure")
-        return [{"ok": True}]
+        return self.reload_result
 
     async def check_health(self):
         return None
@@ -121,3 +124,50 @@ async def test_engine_constructed_with_weight_source(monkeypatch):
     )
     await dep._initialize()
     assert seen["a"] == "rdt"
+
+
+@pytest.mark.asyncio
+async def test_reload_weights_failure_blocks_wake():
+    """A level-2 wake whose reload_weights reports {"ok": False} must raise
+    and must NOT mark the model awake."""
+
+    class FailingReloadEngine(FakeEngine):
+        reload_result = [{"ok": False}]
+
+    set_vllm_engine_class(FailingReloadEngine)
+    dep = FuseModelDeployment(
+        [_cfg("a"), _cfg("b")],
+        default_models=["a"],
+        weight_source="rdt",
+        weight_cache=object(),
+    )
+    await dep._initialize()
+    # Sleep 'a' at level 2 by switching to 'b'.
+    await dep.switch_combination(["b"], sleep_level=2)
+    # Waking 'a' should fail because reload_weights reports failure.
+    with pytest.raises(RuntimeError, match="reload_weights reported failure"):
+        await dep.switch_combination(["a"], sleep_level=2)
+    # 'a' must not be in the awake set nor marked awake.
+    assert "a" not in dep._active_models
+    assert dep._stats["a"].state != "awake"
+
+
+@pytest.mark.asyncio
+async def test_reload_weights_success_wakes_normally():
+    """A level-2 wake whose reload_weights reports {"ok": True} wakes cleanly."""
+
+    class OkReloadEngine(FakeEngine):
+        reload_result = [{"ok": True}]
+
+    set_vllm_engine_class(OkReloadEngine)
+    dep = FuseModelDeployment(
+        [_cfg("a"), _cfg("b")],
+        default_models=["a"],
+        weight_source="rdt",
+        weight_cache=object(),
+    )
+    await dep._initialize()
+    await dep.switch_combination(["b"], sleep_level=2)
+    await dep.switch_combination(["a"], sleep_level=2)
+    assert "a" in dep._active_models
+    assert dep._stats["a"].state == "awake"
