@@ -72,6 +72,13 @@ class InProcessVLLMEngine:
             ek["worker_extension_cls"] = (
                 "fuse_llm.rdt_worker.RDTReloadWorkerExtension"
             )
+            # The deployment passes the WeightCacheServer ACTOR HANDLE through
+            # collective_rpc (a name resolved via ray.get_actor loses the RDT
+            # enable_tensor_transport metadata).  vLLM's collective_rpc msgpack
+            # encoder cannot serialize an ActorHandle, so enable its pickle
+            # fallback.  Must be set before the EngineCore subprocess spawns so
+            # it inherits the env.
+            os.environ.setdefault("VLLM_ALLOW_INSECURE_SERIALIZATION", "1")
         return ek
 
     async def start(self) -> None:

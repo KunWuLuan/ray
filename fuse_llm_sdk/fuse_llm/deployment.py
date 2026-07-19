@@ -543,18 +543,24 @@ class FuseModelDeployment:
         level = self._sleep_levels.get(model_id)
 
         if level == 2:
+            # Disk uses vLLM's built-in ``reload_weights`` worker method (no
+            # args).  RDT uses our ``rdt_reload_weights`` worker extension — a
+            # DISTINCT name is required because vLLM refuses to let a
+            # worker_extension_cls shadow the built-in ``reload_weights``.
+            rpc_method = "reload_weights"
             rpc_args = ()
             if self._weight_source == "rdt":
+                rpc_method = "rdt_reload_weights"
                 rpc_args = (self._weight_cache, model_id)
             logger.info(
                 "Waking up '%s' from level-2 sleep "
-                "(3-step: weights -> reload[%s] -> kv_cache) ...",
+                "(3-step: weights -> %s -> kv_cache) ...",
                 model_id,
-                self._weight_source,
+                rpc_method,
             )
             await engine.wakeup(tags=["weights"])
             results = await engine.collective_rpc(
-                method="reload_weights", args=rpc_args
+                method=rpc_method, args=rpc_args
             )
             # Readiness gate: only mark a model awake after reload_weights
             # reports full coverage.  Be lenient — the worker returns rich dicts

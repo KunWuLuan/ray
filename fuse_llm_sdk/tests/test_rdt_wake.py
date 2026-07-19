@@ -88,7 +88,7 @@ async def test_rdt_wake_passes_cache_handle_to_worker():
     await dep.switch_combination(["a"], sleep_level=2)
 
     calls = dep._engines["a"].rpc_calls
-    assert ("reload_weights", (sentinel_cache, "a")) in calls
+    assert ("rdt_reload_weights", (sentinel_cache, "a")) in calls
 
 
 @pytest.mark.asyncio

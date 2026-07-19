@@ -40,7 +40,6 @@ def _load_state_dict(model_source: str) -> Dict[str, "Any"]:
     return state
 
 
-@ray.remote
 class WeightCacheServer:
     """Ray actor holding model weights in host RAM, served over NIXL."""
 
@@ -87,3 +86,13 @@ class WeightCacheServer:
     def get_weights(self, model_id: str) -> List[Any]:
         sd = self._state_dicts[model_id]  # KeyError for unknown model (by design)
         return [sd[name] for name in self._names[model_id]]
+
+
+# RDT requires the actor to opt into tensor transport at class-decoration time
+# (``@ray.remote(enable_tensor_transport=True)``); a method's
+# ``tensor_transport="nixl"`` is rejected otherwise.  Fall back to a plain actor
+# on older Ray versions that lack the flag (e.g. a local unit-test env).
+try:
+    WeightCacheServer = ray.remote(enable_tensor_transport=True)(WeightCacheServer)
+except TypeError:
+    WeightCacheServer = ray.remote(WeightCacheServer)

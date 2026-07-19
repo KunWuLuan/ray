@@ -72,7 +72,7 @@ def test_reload_weights_success(monkeypatch):
         type("T", (), {"cuda": type("C", (), {"synchronize": staticmethod(lambda: None)})()})(),
     )
 
-    result = ext.reload_weights(server, "m")
+    result = ext.rdt_reload_weights(server, "m")
     assert result["ok"] is True
     assert result["source"] == "rdt"
     assert model.loaded == ["a", "b"]
@@ -94,7 +94,7 @@ def test_reload_weights_falls_back_to_disk(monkeypatch):
         return {"ok": True, "loaded": 1, "source": "disk"}
 
     monkeypatch.setattr(ext, "_reload_weights_from_disk", _fake_disk)
-    result = ext.reload_weights(_BrokenServer(), "m")
+    result = ext.rdt_reload_weights(_BrokenServer(), "m")
     assert result["source"] == "disk"
     assert "nixl down" in called["reason"]
 
