@@ -1,0 +1,117 @@
+# syntax=docker/dockerfile:1
+#
+# Fused-LLM serving image with RDT-over-eRDMA support.
+#
+# Base = Alibaba's NIXL image (Ubuntu 24.04, Python 3.12, torch 2.12+cu130,
+# NIXL, and a SYSTEM UCX 1.19.0 that NIXL links against — this is the key
+# property; pip-installed NIXL bundles its own UCX and cannot use eRDMA).
+#
+# This image reproduces the validated recipe:
+#   1. swap the image's MOFED/DOCA rdma-core (mlx5-only) for the eRDMA-capable
+#      rdma-core so the system libibverbs (hence the system UCX) enumerates
+#      erdma_0/1;
+#   2. install ray + vllm + the fuse_llm SDK into the image's uv venv;
+#   3. bake the eRDMA/UCX runtime env (incl. the critical ERDMA_ENABLE_SRQ=Y).
+#
+# Verified: UCX brings up rma(rc_verbs/erdma_0:1) and cross-node Ray RDT
+# transfers ride the eRDMA fabric (confirmed via erdma hw byte counters).
+#
+# Build (context = fuse_llm_sdk/):
+#   docker build -f Dockerfile.erdma -t <your-registry>/fuse-llm-erdma:latest .
+# Pull of the base needs the regcred-cn-hangzhou credentials.
+
+ARG NIXL_BASE=registry-cn-hangzhou.ack.aliyuncs.com/dev/nixl:latest
+FROM ${NIXL_BASE}
+
+# Alibaba mirrors for speed inside the VPC.
+ARG PIP_INDEX=https://mirrors.aliyun.com/pypi/simple/
+# eRDMA rdma-core version — must ABI-match the base image's rdma-core (56.x).
+# 56.2-1.0.3 validated against dev/nixl:latest (DOCA rdma-core 2510 -> 56.2).
+ARG ERDMA_VER=56.2-1.0.3
+ARG RAY_VERSION=2.56.1
+# vLLM version. Defaults to the latest release (0.25.1). Set to "" to skip
+# (transport-only image). NOTE: 0.25.1 pins torch==2.11.0, which differs from
+# the base image's torch 2.12+cu130 — see the warning in the vLLM stage below.
+ARG VLLM_VERSION=0.25.1
+
+SHELL ["/bin/bash", "-lc"]
+
+# --------------------------------------------------------------------------
+# 1) eRDMA rdma-core: replace the mlx5-only DOCA providers with the eRDMA build.
+#    Adds erdma.driver + liberdma-rdmav34.so so libibverbs sees erdma_0/1.
+#    --allow-downgrades because 56.2 < the DOCA 2510 version string.
+# --------------------------------------------------------------------------
+RUN wget -qO- https://mirrors.aliyun.com/erdma/GPGKEY | apt-key add - \
+ && echo "deb [arch=amd64] https://mirrors.aliyun.com/erdma/apt/ubuntu noble/erdma main" \
+      > /etc/apt/sources.list.d/erdma.list \
+ && apt-get update \
+ && apt-get install -y --allow-downgrades \
+      "libibverbs1=${ERDMA_VER}" "ibverbs-providers=${ERDMA_VER}" \
+      "ibverbs-utils=${ERDMA_VER}" "librdmacm1=${ERDMA_VER}" \
+ && rm -rf /var/lib/apt/lists/*
+
+# --------------------------------------------------------------------------
+# 2) Python deps into the base image's uv-managed venv (/workspace/.venv).
+#    The venv has NO pip — use `uv pip`. Do NOT reinstall torch: NIXL and the
+#    base are built against torch 2.12+cu130; keep it.
+# --------------------------------------------------------------------------
+RUN source /workspace/.venv/bin/activate \
+ && uv pip install --index-url "${PIP_INDEX}" "ray[serve]==${RAY_VERSION}"
+
+# --------------------------------------------------------------------------
+# 3) vLLM. Defaults to VLLM_VERSION=0.25.1 (latest).
+#
+#    WARNING: vLLM 0.25.1 pins torch==2.11.0, but this base image ships torch
+#    2.12+cu130. Installing it will let uv RE-RESOLVE torch to 2.11.0, which
+#    can (a) pull a non-cu130 torch and (b) break NIXL if it was built against
+#    the base's torch 2.12+cu130. If the build succeeds but NIXL/eRDMA or CUDA
+#    then misbehave, this torch swap is the first suspect.
+#
+#    If you need to KEEP torch 2.12+cu130, override with a torch-2.12-matched
+#    vLLM instead — either:
+#      (a) --build-arg VLLM_VERSION=<wheel built for torch 2.12+cu130>, or
+#      (b) RECOMMENDED: multi-stage copy vLLM 0.23.1.dev0 from your verl image
+#          (same py3.12 + torch 2.12+cu130), and set --build-arg VLLM_VERSION=""
+#          to skip the pip install. Example (uncomment + add the FROM ... AS verl
+#          stage at the top):
+#            # COPY --from=verl /usr/local/lib/python3.12/dist-packages/vllm \
+#            #                  /workspace/.venv/lib/python3.12/site-packages/vllm
+#            # COPY --from=verl /usr/local/lib/python3.12/dist-packages/vllm-*.dist-info \
+#            #                  /workspace/.venv/lib/python3.12/site-packages/
+#
+RUN if [ -n "${VLLM_VERSION}" ]; then \
+      source /workspace/.venv/bin/activate \
+      && uv pip install --index-url "${PIP_INDEX}" "vllm==${VLLM_VERSION}" \
+      && python -c "import torch; print('torch after vllm install:', torch.__version__)" ; \
+    else \
+      echo "VLLM_VERSION empty -> skipping vLLM (transport-only image)." ; \
+    fi
+
+# --------------------------------------------------------------------------
+# 4) fuse_llm SDK (FuseModelDeployment + RDT weight loading).
+#    fuse_llm is pure Python, so we put it on PYTHONPATH instead of building a
+#    wheel. This deliberately avoids `uv pip install <dir>`: uv walks UP the
+#    tree looking for a workspace root and trips on any parent pyproject.toml
+#    (e.g. a repo-root tooling config with a bare `[project]` table and no
+#    name). PYTHONPATH is build-free and is inherited by the vLLM ray-executor
+#    worker subprocesses, so `worker_extension_cls="fuse_llm.rdt_worker...."`
+#    resolves at runtime.
+# --------------------------------------------------------------------------
+COPY fuse_llm /opt/fuse_llm/fuse_llm
+ENV PYTHONPATH=/opt/fuse_llm
+
+# --------------------------------------------------------------------------
+# 5) eRDMA + UCX runtime config (validated recipe).
+#    ERDMA_ENABLE_SRQ=Y is REQUIRED — without it UCX rc fails with
+#    "ibv_create_srq() Operation not supported" and falls back to TCP.
+#    Adjust UCX_NET_DEVICES if the node exposes a different eRDMA port/index.
+# --------------------------------------------------------------------------
+ENV ERDMA_ENABLE_SRQ=Y \
+    UCX_TLS=rc,ud,sm,self,tcp,cuda_copy,cuda_ipc \
+    UCX_NET_DEVICES=erdma_0:1 \
+    UCX_IB_GID_INDEX=auto \
+    UCX_IB_ROCE_LOCAL_SUBNET=n \
+    UCX_MAX_RNDV_RAILS=1 \
+    UCX_RNDV_THRESH=8192
+
+CMD ["sleep", "infinity"]
